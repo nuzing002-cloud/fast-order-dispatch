@@ -1,4 +1,4 @@
-import { PaymentService } from '../src/services/PaymentService';
+import { PaymentGateway, PaymentService } from '../src/services/PaymentService';
 import { Order, OrderStatus, PaymentStatus } from '../src/types/order';
 
 function makeOrder(totalAmount: number): Order {
@@ -49,6 +49,28 @@ describe('PaymentService', () => {
 
     expect(transaction.status).toBe(PaymentStatus.FAILED);
     expect(transaction.notes).toContain('Invalid payment amount');
+    expect(transaction.processedAt).toBeInstanceOf(Date);
+  });
+
+  test('fails a payment when the gateway declines', async () => {
+    const gateway: PaymentGateway = {
+      charge: async () => false,
+      refund: async () => false
+    };
+    const transaction = await new PaymentService(gateway).processPayment(makeOrder(50));
+
+    expect(transaction.kind).toBe('charge');
+    expect(transaction.status).toBe(PaymentStatus.FAILED);
+    expect(transaction.notes).toBe('Payment failed');
+  });
+
+  test('creates a refund transaction with a negative amount', async () => {
+    const transaction = await new PaymentService().refund(makeOrder(120), 'wallet');
+
+    expect(transaction.kind).toBe('refund');
+    expect(transaction.amount).toBe(-120);
+    expect(transaction.method).toBe('wallet');
+    expect(transaction.status).toBe(PaymentStatus.COMPLETED);
     expect(transaction.processedAt).toBeInstanceOf(Date);
   });
 });

@@ -30,9 +30,9 @@ describe('realtime events', () => {
 
   beforeAll(async () => {
     service = new BatchProcessingService();
-    const app = createDispatchApp(service);
+    const app = createDispatchApp({ service });
     server = createServer(app);
-    ioServer = attachRealtime(server, service);
+    ioServer = attachRealtime(server, service, { redisUrl: null });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;

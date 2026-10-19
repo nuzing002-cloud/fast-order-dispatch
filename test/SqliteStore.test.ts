@@ -37,6 +37,16 @@ describeSqlite('SqliteStore persistence', () => {
     first.addOrder(makeOrder('o2', 13.77, 100.52, 80));
     const batch = await first.processBatch();
     first.addOrder(makeOrder('o3'));
+    first.recordPayment({
+      id: 'tx1',
+      orderId: 'o1',
+      amount: 120,
+      method: 'card',
+      kind: 'charge',
+      status: 'COMPLETED',
+      createdAt: new Date(),
+      processedAt: new Date()
+    });
     firstStore.close();
 
     const secondStore = new SqliteStore(dbPath);
@@ -56,6 +66,10 @@ describeSqlite('SqliteStore persistence', () => {
     expect(batches).toHaveLength(1);
     expect(batches[0].createdAt).toBeInstanceOf(Date);
     expect(batches[0].deliverySequence).toHaveLength(2);
+    const payments = restored.getPayments('o1');
+    expect(payments).toHaveLength(1);
+    expect(payments[0].kind).toBe('charge');
+    expect(payments[0].createdAt).toBeInstanceOf(Date);
     secondStore.close();
   });
 

@@ -10,7 +10,7 @@ let service: BatchProcessingService;
 
 beforeAll(async () => {
   service = new BatchProcessingService();
-  const app = createDispatchApp(service);
+  const app = createDispatchApp({ service });
   server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const address = server.address() as AddressInfo;
@@ -140,4 +140,24 @@ test('returns 404 for unknown orders', async () => {
 
   const statusUpdate = await patch('/orders/missing/status', { status: 'CANCELLED' });
   expect(statusUpdate.status).toBe(404);
+});
+
+test('paginates and filters orders and batches', async () => {
+  const page = await (await fetch(`${baseUrl}/orders?limit=1&offset=0`)).json();
+  expect(page.orders).toHaveLength(1);
+  expect(page.total).toBeGreaterThanOrEqual(2);
+  expect(page.limit).toBe(1);
+  expect(page.offset).toBe(0);
+
+  const delivered = await (await fetch(`${baseUrl}/orders?status=DELIVERED`)).json();
+  expect(delivered.orders.length).toBeGreaterThanOrEqual(1);
+  expect(delivered.orders.every((order: { status: string }) => order.status === 'DELIVERED')).toBe(true);
+
+  const batches = await (await fetch(`${baseUrl}/batches?limit=1`)).json();
+  expect(batches.batches).toHaveLength(1);
+  expect(batches.total).toBe(1);
+
+  expect((await fetch(`${baseUrl}/orders?limit=0`)).status).toBe(400);
+  expect((await fetch(`${baseUrl}/orders?offset=-1`)).status).toBe(400);
+  expect((await fetch(`${baseUrl}/orders?status=NOPE`)).status).toBe(400);
 });

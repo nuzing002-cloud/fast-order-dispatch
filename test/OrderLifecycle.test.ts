@@ -171,4 +171,21 @@ describe('order lifecycle', () => {
     service.addOrder(stored, false);
     expect(() => service.addOrder(makeOrder('o2'))).toThrow('already exists');
   });
+
+  test('dispatches automatically when auto processing is enabled', async () => {
+    const service = new BatchProcessingService();
+    service.registerDriver(makeDriver());
+    const assigned = new Promise<import('../src/types/order').BatchAssignment>((resolve) => {
+      service.once('batch:assigned', resolve);
+    });
+    service.startAutoProcessing(120);
+    try {
+      service.addOrder(makeOrder('o1'));
+      const batch = await assigned;
+      expect(batch.orderIds).toEqual(['o1']);
+      expect(service.getQueueSize()).toBe(0);
+    } finally {
+      service.stopAutoProcessing();
+    }
+  });
 });
