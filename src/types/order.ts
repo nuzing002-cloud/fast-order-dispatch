@@ -101,6 +101,8 @@ export interface BatchAssignment {
   completedAt?: Date;
   totalRevenue: number;
   deliverySequence: string[]; // Ordered list of order IDs
+  totalDistanceKm?: number;
+  estimatedDurationMinutes?: number;
 }
 
 export interface PaymentTransaction {
@@ -125,4 +127,25 @@ export interface SystemMetrics {
   activeDrivers: number;
   pendingOrders: number;
   timestamp: Date;
+}
+
+export interface CreateOrderInput {
+  orderId?: string;
+  restaurant: Restaurant;
+  customer: Customer;
+  items: OrderItem[];
+  totalAmount: number;
+  deliveryFee: number;
+  notes?: string;
+}
+
+export interface CreateDriverInput {
+  name: string;
+  phone: string;
+  vehicle: string;
+  licensePlate: string;
+  currentLatitude: number;
+  currentLongitude: number;
+  maxOrdersPerBatch?: number;
+  rating?: number;
 }
