@@ -115,7 +115,7 @@ describe('BatchProcessingService', () => {
   test('rejects duplicate queued orders', () => {
     const service = new BatchProcessingService();
     service.addOrder(makeOrder('o1'));
-    expect(() => service.addOrder(makeOrder('o1'))).toThrow('already queued');
+    expect(() => service.addOrder(makeOrder('o1'))).toThrow('already exists');
   });
 
   test('rejects duplicate driver registration', () => {
