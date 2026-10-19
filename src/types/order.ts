@@ -111,6 +111,7 @@ export interface PaymentTransaction {
   orderId: string;
   amount: number;
   method: string;
+  kind?: 'charge' | 'refund';
   status: PaymentStatus;
   transactionId?: string;
   createdAt: Date;

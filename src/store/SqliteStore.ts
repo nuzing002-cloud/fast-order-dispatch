@@ -1,6 +1,6 @@
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { BatchAssignment, Driver, Order } from '../types/order';
+import { BatchAssignment, Driver, Order, PaymentTransaction } from '../types/order';
 import { StateSnapshot, Store } from './Store';
 
 const DATE_KEYS = new Set([
@@ -40,6 +40,7 @@ export class SqliteStore implements Store {
       CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS drivers (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, data TEXT NOT NULL);
     `);
   }
 
@@ -55,19 +56,37 @@ export class SqliteStore implements Store {
     this.upsert('batches', batch.id, batch);
   }
 
+  savePayment(payment: PaymentTransaction): void {
+    this.upsert('payments', payment.id, payment);
+  }
+
   load(): StateSnapshot {
     return {
       orders: this.readAll<Order>('orders'),
       drivers: this.readAll<Driver>('drivers'),
-      batches: this.readAll<BatchAssignment>('batches')
+      batches: this.readAll<BatchAssignment>('batches'),
+      payments: this.readAll<PaymentTransaction>('payments')
     };
+  }
+
+  ping(): boolean {
+    try {
+      this.database.prepare('SELECT 1').get();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   close(): void {
     this.database.close();
   }
 
-  private upsert(table: 'orders' | 'drivers' | 'batches', id: string, value: unknown): void {
+  private upsert(
+    table: 'orders' | 'drivers' | 'batches' | 'payments',
+    id: string,
+    value: unknown
+  ): void {
     this.database
       .prepare(
         `INSERT INTO ${table} (id, data) VALUES (?, ?)
@@ -76,7 +95,7 @@ export class SqliteStore implements Store {
       .run(id, JSON.stringify(value));
   }
 
-  private readAll<T>(table: 'orders' | 'drivers' | 'batches'): T[] {
+  private readAll<T>(table: 'orders' | 'drivers' | 'batches' | 'payments'): T[] {
     const rows = this.database.prepare(`SELECT data FROM ${table}`).all() as Array<{ data: string }>;
     return rows.map((row) => parseJson<T>(row.data));
   }

@@ -1,13 +1,23 @@
 import cors from 'cors';
-import dotenv from 'dotenv';
 import express, { Express, NextFunction, Request, Response } from 'express';
 import { createServer } from 'http';
 import { v4 as uuidv4 } from 'uuid';
+import { loadConfig } from './config';
 import { ConflictError, HttpError, NotFoundError, ValidationError } from './errors';
+import { logger } from './logger';
+import {
+  createAuthMiddleware,
+  createRateLimiter,
+  requestLogger,
+  RequestWithId,
+  securityHeaders
+} from './middleware';
+import { openApiSpec } from './openapi';
 import { attachRealtime } from './realtime';
 import {
   BatchProcessingService,
-  DISPATCH_DRIVER_ID
+  DISPATCH_DRIVER_ID,
+  DriverPatch
 } from './services/BatchProcessingService';
 import { PaymentService } from './services/PaymentService';
 import { InMemoryStore } from './store/Store';
@@ -23,7 +33,7 @@ import {
   Restaurant
 } from './types/order';
 
-dotenv.config();
+const config = loadConfig();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -52,6 +62,22 @@ function nonNegativeNumber(value: unknown, field: string): number {
   const number = requiredNumber(value, field);
   if (number < 0) {
     throw new ValidationError(`${field} must be zero or greater`);
+  }
+  return number;
+}
+
+function positiveInteger(value: unknown, field: string): number {
+  const number = requiredNumber(value, field);
+  if (!Number.isInteger(number) || number < 1) {
+    throw new ValidationError(`${field} must be a positive integer`);
+  }
+  return number;
+}
+
+function rating(value: unknown, field: string): number {
+  const number = requiredNumber(value, field);
+  if (number < 0 || number > 5) {
+    throw new ValidationError(`${field} must be between 0 and 5`);
   }
   return number;
 }
@@ -151,15 +177,51 @@ function parseDriver(value: unknown): Driver {
     totalDeliveries: value.totalDeliveries === undefined
       ? 0
       : nonNegativeNumber(value.totalDeliveries, 'totalDeliveries'),
-    rating: value.rating === undefined ? 0 : requiredNumber(value.rating, 'rating'),
+    rating: value.rating === undefined ? 0 : rating(value.rating, 'rating'),
     isAvailable: value.isAvailable === undefined ? status === DriverStatus.AVAILABLE : value.isAvailable === true,
     maxOrdersPerBatch: value.maxOrdersPerBatch === undefined
       ? 3
-      : nonNegativeNumber(value.maxOrdersPerBatch, 'maxOrdersPerBatch'),
+      : positiveInteger(value.maxOrdersPerBatch, 'maxOrdersPerBatch'),
     lastLocationUpdate: value.lastLocationUpdate === undefined
       ? undefined
       : new Date(requiredString(value.lastLocationUpdate, 'lastLocationUpdate'))
   };
+}
+
+function parseDriverPatch(value: unknown): DriverPatch {
+  if (!isRecord(value)) throw new ValidationError('request body must be an object');
+  const patch: DriverPatch = {};
+
+  if (value.currentLatitude !== undefined || value.currentLongitude !== undefined) {
+    patch.currentLatitude = coordinate(value.currentLatitude, 'currentLatitude', -90, 90);
+    patch.currentLongitude = coordinate(value.currentLongitude, 'currentLongitude', -180, 180);
+  }
+  if (value.status !== undefined) {
+    const status = requiredString(value.status, 'status') as DriverStatus;
+    if (status === DriverStatus.BUSY || !Object.values(DriverStatus).includes(status)) {
+      throw new ValidationError('status must be one of: AVAILABLE, ON_BREAK, OFFLINE');
+    }
+    patch.status = status;
+  }
+  if (value.isAvailable !== undefined) {
+    if (typeof value.isAvailable !== 'boolean') {
+      throw new ValidationError('isAvailable must be a boolean');
+    }
+    patch.isAvailable = value.isAvailable;
+  }
+  if (value.maxOrdersPerBatch !== undefined) {
+    patch.maxOrdersPerBatch = positiveInteger(value.maxOrdersPerBatch, 'maxOrdersPerBatch');
+  }
+  if (value.rating !== undefined) {
+    patch.rating = rating(value.rating, 'rating');
+  }
+
+  if (Object.keys(patch).length === 0) {
+    throw new ValidationError(
+      'at least one of currentLatitude/currentLongitude, status, isAvailable, maxOrdersPerBatch, or rating is required'
+    );
+  }
+  return patch;
 }
 
 function parseOrderStatus(value: unknown): OrderStatus {
@@ -178,13 +240,52 @@ function routeParam(request: Request, name: string): string {
   return value;
 }
 
-export function createDispatchApp(
-  service: BatchProcessingService = new BatchProcessingService(),
-  paymentService: PaymentService = new PaymentService()
-): Express {
+function parsePagination(query: Request['query']): { limit: number; offset: number } {
+  const limit = query.limit === undefined ? 50 : Number(query.limit);
+  const offset = query.offset === undefined ? 0 : Number(query.offset);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new ValidationError('limit must be an integer between 1 and 200');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new ValidationError('offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+const docsHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>fast-order-dispatch API</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>SwaggerUIBundle({ url: '/openapi.json', dom_id: '#swagger-ui' });</script>
+</body>
+</html>`;
+
+export interface DispatchAppOptions {
+  service?: BatchProcessingService;
+  paymentService?: PaymentService;
+  apiKey?: string;
+  rateLimit?: { windowMs: number; max: number };
+  trustProxy?: boolean;
+}
+
+export function createDispatchApp(options: DispatchAppOptions = {}): Express {
+  const service = options.service ?? new BatchProcessingService();
+  const paymentService = options.paymentService ?? new PaymentService();
   const app = express();
 
+  if (options.trustProxy) app.set('trust proxy', true);
+
+  app.use(securityHeaders());
+  app.use(requestLogger());
   app.use(cors({ origin: process.env.CORS_ORIGIN ?? '*' }));
+  if (options.rateLimit) app.use(createRateLimiter(options.rateLimit));
+  app.use(createAuthMiddleware(options.apiKey));
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/health', (_request: Request, response: Response) => {
@@ -192,11 +293,25 @@ export function createDispatchApp(
       status: 'ok',
       service: 'fast-order-dispatch',
       dispatchDriverId: DISPATCH_DRIVER_ID,
+      dispatchDriverIds: service.getDispatchDriverIds(),
       storage: process.env.DB_PATH ? 'sqlite' : 'memory',
       queueSize: service.getQueueSize(),
       uptimeSeconds: Math.round(process.uptime()),
       timestamp: new Date().toISOString()
     });
+  });
+
+  app.get('/ready', (_request: Request, response: Response) => {
+    const ready = service.isReady();
+    response.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'unavailable' });
+  });
+
+  app.get('/openapi.json', (_request: Request, response: Response) => {
+    response.json(openApiSpec);
+  });
+
+  app.get('/docs', (_request: Request, response: Response) => {
+    response.type('html').send(docsHtml);
   });
 
   app.get('/drivers', (_request: Request, response: Response) => {
@@ -207,22 +322,64 @@ export function createDispatchApp(
     try {
       const driver = parseDriver(request.body);
       service.registerDriver(driver);
-      response.status(201).json({ driver, dispatchDriverId: DISPATCH_DRIVER_ID });
+      response.status(201).json({
+        driver: service.getDriver(driver.id) ?? driver,
+        dispatchDriverId: DISPATCH_DRIVER_ID
+      });
     } catch (error) {
       next(error);
     }
   });
 
-  app.get('/orders/pending', (_request: Request, response: Response) => {
+  app.get('/drivers/:id', (request: Request, response: Response, next: NextFunction) => {
+    try {
+      const driverId = routeParam(request, 'id');
+      const driver = service.getDriver(driverId);
+      if (!driver) throw new NotFoundError(`Driver ${driverId} was not found`);
+      response.json({ driver });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch('/drivers/:id', (request: Request, response: Response, next: NextFunction) => {
+    try {
+      const patch = parseDriverPatch(request.body);
+      const driver = service.updateDriverDetails(routeParam(request, 'id'), patch);
+      response.json({ driver });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  const pendingOrders = (_request: Request, response: Response): void => {
     response.json({
       orders: service.getPendingOrders(),
       queueSize: service.getQueueSize(),
       dispatchDriverId: DISPATCH_DRIVER_ID
     });
-  });
+  };
 
-  app.get('/orders', (_request: Request, response: Response) => {
-    response.json({ orders: service.getOrders() });
+  app.get('/orders/pending', pendingOrders);
+
+  app.get('/orders', (request: Request, response: Response, next: NextFunction) => {
+    try {
+      const { limit, offset } = parsePagination(request.query);
+      const status = request.query.status === undefined
+        ? undefined
+        : parseOrderStatus(request.query.status);
+      const orders = service
+        .getOrders()
+        .filter((order) => status === undefined || order.status === status);
+      response.json({
+        orders: orders.slice(offset, offset + limit),
+        total: orders.length,
+        limit,
+        offset
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/orders/:id', (request: Request, response: Response, next: NextFunction) => {
@@ -236,6 +393,18 @@ export function createDispatchApp(
     }
   });
 
+  app.get('/orders/:id/payments', (request: Request, response: Response, next: NextFunction) => {
+    try {
+      const orderId = routeParam(request, 'id');
+      if (!service.getOrder(orderId)) {
+        throw new NotFoundError(`Order ${orderId} was not found`);
+      }
+      response.json({ payments: service.getPayments(orderId) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/orders', async (request: Request, response: Response, next: NextFunction) => {
     try {
       const order = parseOrder(request.body);
@@ -244,6 +413,7 @@ export function createDispatchApp(
         : undefined;
       const transaction = await paymentService.processPayment(order, paymentMethod ?? 'card');
       order.paymentStatus = transaction.status;
+      service.recordPayment(transaction);
 
       if (transaction.status !== PaymentStatus.COMPLETED) {
         service.addOrder(order, false);
@@ -261,8 +431,11 @@ export function createDispatchApp(
         order: service.getOrder(order.id),
         transaction,
         batch,
-        queueSize: service.getQueueSize(),
-        assignedToTargetDriver: batch?.driverId === DISPATCH_DRIVER_ID
+        assignedDriverId: batch?.driverId ?? null,
+        assignedToTargetDriver: batch
+          ? service.getDispatchDriverIds().includes(batch.driverId)
+          : false,
+        queueSize: service.getQueueSize()
       });
     } catch (error) {
       next(error);
@@ -282,6 +455,7 @@ export function createDispatchApp(
         ? optionalString(request.body.method, 'method')
         : undefined;
       const transaction = await paymentService.processPayment(order, method ?? 'card');
+      service.recordPayment(transaction);
       service.updatePaymentStatus(orderId, transaction.status);
 
       if (transaction.status !== PaymentStatus.COMPLETED) {
@@ -299,8 +473,45 @@ export function createDispatchApp(
         order: service.getOrder(orderId),
         transaction,
         batch,
-        queueSize: service.getQueueSize(),
-        assignedToTargetDriver: batch?.driverId === DISPATCH_DRIVER_ID
+        assignedDriverId: batch?.driverId ?? null,
+        assignedToTargetDriver: batch
+          ? service.getDispatchDriverIds().includes(batch.driverId)
+          : false,
+        queueSize: service.getQueueSize()
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/orders/:id/refund', async (request: Request, response: Response, next: NextFunction) => {
+    try {
+      const orderId = routeParam(request, 'id');
+      const order = service.getOrder(orderId);
+      if (!order) throw new NotFoundError(`Order ${orderId} was not found`);
+      if (order.paymentStatus !== PaymentStatus.COMPLETED) {
+        throw new ConflictError(`Order ${orderId} has no completed payment to refund`);
+      }
+
+      const method = isRecord(request.body)
+        ? optionalString(request.body.method, 'method')
+        : undefined;
+      const transaction = await paymentService.refund(order, method ?? 'card');
+      service.recordPayment(transaction);
+
+      if (transaction.status !== PaymentStatus.COMPLETED) {
+        response.status(402).json({
+          error: transaction.notes ?? 'Refund failed',
+          order: service.getOrder(orderId),
+          transaction
+        });
+        return;
+      }
+
+      service.updatePaymentStatus(orderId, PaymentStatus.REFUNDED);
+      response.json({
+        order: service.getOrder(orderId),
+        transaction
       });
     } catch (error) {
       next(error);
@@ -319,8 +530,19 @@ export function createDispatchApp(
     }
   });
 
-  app.get('/batches', (_request: Request, response: Response) => {
-    response.json({ batches: service.getBatches() });
+  app.get('/batches', (request: Request, response: Response, next: NextFunction) => {
+    try {
+      const { limit, offset } = parsePagination(request.query);
+      const batches = service.getBatches();
+      response.json({
+        batches: batches.slice(offset, offset + limit),
+        total: batches.length,
+        limit,
+        offset
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/metrics', (_request: Request, response: Response) => {
@@ -336,24 +558,58 @@ export function createDispatchApp(
     }
   });
 
-  app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  app.use((error: unknown, request: RequestWithId, response: Response, _next: NextFunction) => {
     if (error instanceof HttpError) {
+      if (error.statusCode >= 500) {
+        logger.error('request_error', {
+          requestId: request.requestId,
+          status: error.statusCode,
+          error: error.message,
+          path: request.originalUrl
+        });
+      } else {
+        logger.warn('request_rejected', {
+          requestId: request.requestId,
+          status: error.statusCode,
+          error: error.message,
+          path: request.originalUrl
+        });
+      }
       response.status(error.statusCode).json({ error: error.message });
       return;
     }
+
+    const statusHint =
+      typeof error === 'object' && error !== null && 'status' in error
+        ? (error as { status?: unknown }).status
+        : undefined;
+    if (statusHint === 400) {
+      response.status(400).json({ error: 'Invalid JSON body' });
+      return;
+    }
+
     const message = error instanceof Error ? error.message : 'Internal server error';
-    const statusCode = message.includes('must be') || message.includes('already exists')
-      ? 400
-      : 500;
-    response.status(statusCode).json({ error: message });
+    logger.error('unhandled_error', {
+      requestId: request.requestId,
+      error: message,
+      path: request.originalUrl
+    });
+    response.status(500).json({ error: message });
   });
 
   return app;
 }
 
 const store = process.env.DB_PATH ? new SqliteStore(process.env.DB_PATH) : new InMemoryStore();
-export const dispatchService = new BatchProcessingService(3, store);
-export const app = createDispatchApp(dispatchService);
+export const dispatchService = new BatchProcessingService(3, store, {
+  dispatchDriverIds: config.dispatchDriverIds
+});
+export const app = createDispatchApp({
+  service: dispatchService,
+  apiKey: config.apiKey,
+  rateLimit: { windowMs: config.rateLimitWindowMs, max: config.rateLimitMax },
+  trustProxy: config.trustProxy
+});
 
 export interface StartServerOptions {
   port?: number;
@@ -369,7 +625,10 @@ export function startServer(options: StartServerOptions = {}) {
   }
 
   const server = createServer(app);
-  const io = attachRealtime(server, dispatchService);
+  const io = attachRealtime(server, dispatchService, {
+    apiKey: config.apiKey,
+    redisUrl: process.env.REDIS_URL
+  });
 
   const interval = Number(process.env.AUTO_PROCESS_INTERVAL_MS ?? 0);
   if (Number.isInteger(interval) && interval >= 100) {
@@ -379,10 +638,15 @@ export function startServer(options: StartServerOptions = {}) {
   server.listen(port, host, () => {
     const address = server.address();
     const boundPort = typeof address === 'object' && address !== null ? address.port : port;
-    console.log(`[SERVER] fast-order-dispatch listening on http://${host}:${boundPort}`);
-    console.log(`[DISPATCH] Orders are restricted to driver ${DISPATCH_DRIVER_ID}`);
-    if (process.env.DB_PATH) console.log(`[STORE] SQLite persistence enabled at ${process.env.DB_PATH}`);
-    if (process.env.REDIS_URL) console.log('[REALTIME] REDIS_URL detected; connecting adapter');
+    logger.info('server_listening', {
+      host,
+      port: boundPort,
+      storage: process.env.DB_PATH ? 'sqlite' : 'memory',
+      auth: config.apiKey ? 'api-key' : 'disabled',
+      rateLimit: config.rateLimitMax > 0 ? `${config.rateLimitMax}/${config.rateLimitWindowMs}ms` : 'disabled',
+      redis: Boolean(process.env.REDIS_URL)
+    });
+    logger.info('dispatch_restricted', { driverIds: dispatchService.getDispatchDriverIds() });
   });
 
   return { server, io };
@@ -391,6 +655,7 @@ export function startServer(options: StartServerOptions = {}) {
 if (require.main === module) {
   const { io } = startServer();
   const shutdown = (): void => {
+    logger.info('shutting_down');
     dispatchService.stopAutoProcessing();
     io.close(() => {
       store.close();
