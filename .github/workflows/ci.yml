@@ -42,3 +42,23 @@ jobs:
 
       - name: Test with coverage
         run: npm run test:coverage
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t fast-order-dispatch:ci .
+
+      - name: Smoke test image
+        run: |
+          docker run -d --name fast-order-dispatch -p 3000:3000 -e DB_PATH=/app/data/ci.sqlite3 fast-order-dispatch:ci
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000/health && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:3000/ready
+          docker logs fast-order-dispatch
+          docker rm -f fast-order-dispatch
