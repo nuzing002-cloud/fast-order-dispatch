@@ -102,6 +102,7 @@ export interface BatchAssignment {
   totalRevenue: number;
   deliverySequence: string[]; // Ordered list of order IDs
   totalDistanceKm?: number;
+  totalPreparationMinutes?: number;
   estimatedDurationMinutes?: number;
 }
 

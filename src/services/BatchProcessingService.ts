@@ -1,37 +1,99 @@
-import { Order, OrderStatus, Driver, BatchAssignment, DriverStatus } from '../types/order';
-import { DistanceCalculator } from '../utils/DistanceCalculator';
+import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
+import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { InMemoryStore, Store } from '../store/Store';
+import {
+  BatchAssignment,
+  Driver,
+  DriverStatus,
+  Order,
+  OrderStatus,
+  PaymentStatus,
+  SystemMetrics
+} from '../types/order';
+import { DistanceCalculator } from '../utils/DistanceCalculator';
 
 export const DISPATCH_DRIVER_ID = '1388246780';
 
+const TERMINAL_STATUSES: ReadonlySet<OrderStatus> = new Set([
+  OrderStatus.DELIVERED,
+  OrderStatus.CANCELLED,
+  OrderStatus.FAILED
+]);
+
+const ALLOWED_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
+  [OrderStatus.PENDING]: [OrderStatus.CANCELLED, OrderStatus.FAILED],
+  [OrderStatus.ASSIGNED]: [OrderStatus.PICKED_UP, OrderStatus.CANCELLED, OrderStatus.FAILED],
+  [OrderStatus.PICKED_UP]: [OrderStatus.IN_DELIVERY, OrderStatus.CANCELLED, OrderStatus.FAILED],
+  [OrderStatus.IN_DELIVERY]: [OrderStatus.DELIVERED, OrderStatus.FAILED],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.CANCELLED]: [],
+  [OrderStatus.FAILED]: []
+};
+
 /**
  * Batch Processing Service
- * Processes orders in configured batches, optimizes routing, and assigns to the configured driver
+ * Processes orders in configured batches, optimizes routing, assigns the configured
+ * driver, tracks the order lifecycle, and optionally persists state through a Store.
  */
-export class BatchProcessingService {
+export class BatchProcessingService extends EventEmitter {
   private readonly batchSize: number;
+  private readonly store: Store;
+  private readonly drivers = new Map<string, Driver>();
+  private readonly orders = new Map<string, Order>();
+  private readonly batches = new Map<string, BatchAssignment>();
   private orderQueue: Order[] = [];
   private processingInterval: NodeJS.Timeout | null = null;
-  private isProcessing: boolean = false;
-  private readonly drivers = new Map<string, Driver>();
+  private isProcessing = false;
 
-  constructor(batchSize: number = 3) {
+  constructor(batchSize: number = 3, store: Store = new InMemoryStore()) {
+    super();
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50) {
-      throw new Error('Batch size must be an integer between 1 and 50');
+      throw new ValidationError('Batch size must be an integer between 1 and 50');
     }
     this.batchSize = batchSize;
+    this.store = store;
+    this.restore();
+  }
+
+  private restore(): void {
+    const state = this.store.load();
+    for (const driver of state.drivers) this.drivers.set(driver.id, driver);
+    for (const order of state.orders) this.orders.set(order.id, order);
+    for (const batch of state.batches) this.batches.set(batch.id, batch);
+    this.orderQueue = [...this.orders.values()]
+      .filter((order) => order.status === OrderStatus.PENDING)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
   }
 
   /**
-   * Add order to processing queue
+   * Add an order to the dispatch queue. Set enqueue to false to keep a record
+   * (for example a failed payment) without making it dispatchable.
    */
-  addOrder(order: Order): void {
-    if (this.orderQueue.some((queuedOrder) => queuedOrder.id === order.id)) {
-      throw new Error(`Order ${order.id} is already queued`);
+  addOrder(order: Order, enqueue: boolean = true): void {
+    if (this.orders.has(order.id)) {
+      throw new ConflictError(`Order ${order.id} already exists`);
     }
     order.status = OrderStatus.PENDING;
     order.updatedAt = new Date();
-    this.orderQueue.push(order);
+    this.orders.set(order.id, order);
+    if (enqueue) this.orderQueue.push(order);
+    this.store.saveOrder(order);
+    this.emit('order:created', this.cloneOrder(order));
+  }
+
+  enqueueOrder(orderId: string): Order {
+    const order = this.requireOrder(orderId);
+    if (order.status !== OrderStatus.PENDING) {
+      throw new ConflictError(`Order ${orderId} is ${order.status} and cannot be queued`);
+    }
+    if (!this.orderQueue.some((queuedOrder) => queuedOrder.id === orderId)) {
+      order.updatedAt = new Date();
+      this.orderQueue.push(order);
+      this.store.saveOrder(order);
+      this.emit('order:queued', this.cloneOrder(order));
+    }
+    return this.cloneOrder(order);
   }
 
   /**
@@ -50,12 +112,11 @@ export class BatchProcessingService {
       let driver = this.selectDriver(batchOrders);
 
       if (!driver) {
-        const availableCapacity = this.getAvailableDispatchDrivers()
-          .reduce(
-            (capacity, availableDriver) =>
-              Math.max(capacity, availableDriver.maxOrdersPerBatch - availableDriver.assignedOrders.length),
-            0
-          );
+        const availableCapacity = this.getAvailableDispatchDrivers().reduce(
+          (capacity, availableDriver) =>
+            Math.max(capacity, availableDriver.maxOrdersPerBatch - availableDriver.assignedOrders.length),
+          0
+        );
 
         if (availableCapacity > 0) {
           batchOrders = queuedOrders.slice(0, Math.min(this.batchSize, availableCapacity));
@@ -69,19 +130,22 @@ export class BatchProcessingService {
 
       const optimizedSequence = this.optimizeDeliverySequence(batchOrders, driver);
       const totalDistanceKm = this.calculateRouteDistance(batchOrders, optimizedSequence, driver);
-      const estimatedDurationMinutes = DistanceCalculator.estimateMinutes(totalDistanceKm);
+      const travelMinutes = DistanceCalculator.estimateMinutes(totalDistanceKm);
+      const totalPreparationMinutes = this.calculatePreparationMinutes(batchOrders);
+      const estimatedDurationMinutes = travelMinutes + totalPreparationMinutes;
       const now = new Date();
       const driverId = driver.id;
-      
+
       const batchAssignment: BatchAssignment = {
         id: `batch_${uuidv4()}`,
         driverId,
-        orderIds: batchOrders.map(o => o.id),
+        orderIds: batchOrders.map((order) => order.id),
         createdAt: now,
         startedAt: now,
-        totalRevenue: batchOrders.reduce((sum, o) => sum + o.totalAmount, 0),
+        totalRevenue: batchOrders.reduce((sum, order) => sum + order.totalAmount, 0),
         deliverySequence: optimizedSequence,
         totalDistanceKm: Number(totalDistanceKm.toFixed(3)),
+        totalPreparationMinutes,
         estimatedDurationMinutes
       };
 
@@ -89,23 +153,26 @@ export class BatchProcessingService {
         ...driver,
         status: DriverStatus.BUSY,
         isAvailable: false,
-        assignedOrders: [
-          ...driver.assignedOrders,
-          ...batchOrders.map((order) => order.id)
-        ],
+        assignedOrders: [...driver.assignedOrders, ...batchOrders.map((order) => order.id)],
         lastLocationUpdate: now
       };
       this.updateDriver(updatedDriver);
 
       for (const order of batchOrders) {
         order.status = OrderStatus.ASSIGNED;
-        order.assignedDriverId = driver.id;
+        order.assignedDriverId = driverId;
         order.assignedAt = now;
         order.estimatedDeliveryTime = new Date(now.getTime() + estimatedDurationMinutes * 60_000);
         order.updatedAt = now;
+        this.store.saveOrder(order);
       }
 
+      this.batches.set(batchAssignment.id, batchAssignment);
+      this.store.saveBatch(batchAssignment);
       this.orderQueue.splice(0, batchOrders.length);
+
+      this.emit('batch:assigned', this.cloneBatch(batchAssignment));
+      this.emit('driver:updated', this.cloneDriver(updatedDriver));
 
       return batchAssignment;
     } finally {
@@ -113,16 +180,114 @@ export class BatchProcessingService {
     }
   }
 
+  updateOrderStatus(orderId: string, nextStatus: OrderStatus): Order {
+    const order = this.requireOrder(orderId);
+    const previousStatus = order.status;
+
+    if (previousStatus === nextStatus) {
+      return this.cloneOrder(order);
+    }
+
+    if (!ALLOWED_TRANSITIONS[previousStatus].includes(nextStatus)) {
+      throw new ConflictError(
+        `Order ${orderId} cannot transition from ${previousStatus} to ${nextStatus}`
+      );
+    }
+
+    const now = new Date();
+    order.status = nextStatus;
+    order.updatedAt = now;
+    if (nextStatus === OrderStatus.PICKED_UP) order.pickedUpAt = now;
+    if (nextStatus === OrderStatus.DELIVERED) order.deliveredAt = now;
+
+    if (previousStatus === OrderStatus.PENDING) {
+      this.removeFromQueue(orderId);
+    }
+
+    this.store.saveOrder(order);
+
+    if (TERMINAL_STATUSES.has(nextStatus)) {
+      this.releaseDriverCapacity(order, now);
+      this.completeBatchIfDone(orderId, now);
+    }
+
+    this.emit('order:status', {
+      previousStatus,
+      order: this.cloneOrder(order)
+    });
+
+    return this.cloneOrder(order);
+  }
+
+  updatePaymentStatus(orderId: string, status: PaymentStatus): Order {
+    const order = this.requireOrder(orderId);
+    order.paymentStatus = status;
+    order.updatedAt = new Date();
+    this.store.saveOrder(order);
+    this.emit('payment:updated', {
+      status,
+      order: this.cloneOrder(order)
+    });
+    return this.cloneOrder(order);
+  }
+
+  getOrder(orderId: string): Order | undefined {
+    const order = this.orders.get(orderId);
+    return order ? this.cloneOrder(order) : undefined;
+  }
+
+  getOrders(): Order[] {
+    return [...this.orders.values()].map((order) => this.cloneOrder(order));
+  }
+
+  getBatches(): BatchAssignment[] {
+    return [...this.batches.values()].map((batch) => this.cloneBatch(batch));
+  }
+
+  getMetrics(): SystemMetrics {
+    const orders = [...this.orders.values()];
+    const assignedOrders = orders.filter((order) => order.assignedAt !== undefined);
+    const deliveredOrders = orders.filter((order) => order.status === OrderStatus.DELIVERED);
+    const failedOrders = orders.filter(
+      (order) => order.status === OrderStatus.FAILED || order.status === OrderStatus.CANCELLED
+    );
+    const terminalCount = deliveredOrders.length + failedOrders.length;
+
+    const average = (values: number[]): number =>
+      values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+
+    const processingTimes = assignedOrders.map(
+      (order) => order.assignedAt!.getTime() - order.createdAt.getTime()
+    );
+    const deliveryTimes = deliveredOrders
+      .filter((order) => order.deliveredAt !== undefined && order.assignedAt !== undefined)
+      .map((order) => order.deliveredAt!.getTime() - order.assignedAt!.getTime());
+
+    return {
+      totalOrdersProcessed: assignedOrders.length,
+      totalBatchesCreated: this.batches.size,
+      averageProcessingTime: average(processingTimes),
+      averageDeliveryTime: average(deliveryTimes),
+      successRate: terminalCount === 0 ? 0 : deliveredOrders.length / terminalCount,
+      totalRevenue: deliveredOrders.reduce((sum, order) => sum + order.totalAmount, 0),
+      activeDrivers: [...this.drivers.values()].filter(
+        (driver) => driver.isAvailable && driver.status === DriverStatus.AVAILABLE
+      ).length,
+      pendingOrders: this.orderQueue.length,
+      timestamp: new Date()
+    };
+  }
+
   /**
    * Optimize delivery sequence using nearest neighbor algorithm
    */
   private optimizeDeliverySequence(orders: Order[], driver?: Driver): string[] {
     if (orders.length <= 1) {
-      return orders.map(o => o.id);
+      return orders.map((order) => order.id);
     }
 
     const sequence: string[] = [];
-    const remaining = new Set(orders.map((_, i) => i));
+    const remaining = new Set(orders.map((_, index) => index));
     let currentIndex = -1;
 
     if (driver) {
@@ -153,8 +318,8 @@ export class BatchProcessingService {
       const currentOrder = orders[currentIndex];
       if (!currentOrder) break;
 
-      for (const idx of remaining) {
-        const nextOrder = orders[idx];
+      for (const index of remaining) {
+        const nextOrder = orders[index];
         if (!nextOrder) continue;
         const distance = DistanceCalculator.calculate(
           currentOrder.customer.latitude,
@@ -165,7 +330,7 @@ export class BatchProcessingService {
 
         if (distance < minDistance) {
           minDistance = distance;
-          nearestIndex = idx;
+          nearestIndex = index;
         }
       }
 
@@ -184,24 +349,26 @@ export class BatchProcessingService {
   }
 
   getPendingOrders(): Order[] {
-    return [...this.orderQueue];
+    return this.orderQueue.map((order) => this.cloneOrder(order));
   }
 
   registerDriver(driver: Driver): void {
     if (this.drivers.has(driver.id)) {
-      throw new Error(`Driver ${driver.id} already exists`);
+      throw new ConflictError(`Driver ${driver.id} already exists`);
     }
-    this.drivers.set(driver.id, this.cloneDriver(driver));
+    const stored = this.cloneDriver(driver);
+    this.drivers.set(stored.id, stored);
+    this.store.saveDriver(stored);
+    this.emit('driver:updated', this.cloneDriver(stored));
   }
 
-  /**
-   * Save the driver's current state as a defensive snapshot.
-   */
   updateDriver(driver: Driver): void {
     if (!this.drivers.has(driver.id)) {
-      throw new Error(`Driver ${driver.id} was not found`);
+      throw new NotFoundError(`Driver ${driver.id} was not found`);
     }
-    this.drivers.set(driver.id, this.cloneDriver(driver));
+    const stored = this.cloneDriver(driver);
+    this.drivers.set(stored.id, stored);
+    this.store.saveDriver(stored);
   }
 
   getDrivers(): Driver[] {
@@ -216,7 +383,7 @@ export class BatchProcessingService {
 
   startAutoProcessing(intervalMs: number, onBatch?: (batch: BatchAssignment) => void): void {
     if (!Number.isInteger(intervalMs) || intervalMs < 100) {
-      throw new Error('Processing interval must be at least 100 milliseconds');
+      throw new ValidationError('Processing interval must be at least 100 milliseconds');
     }
     this.stopAutoProcessing();
     this.processingInterval = setInterval(async () => {
@@ -230,10 +397,66 @@ export class BatchProcessingService {
     this.processingInterval = null;
   }
 
+  private requireOrder(orderId: string): Order {
+    const order = this.orders.get(orderId);
+    if (!order) throw new NotFoundError(`Order ${orderId} was not found`);
+    return order;
+  }
+
+  private removeFromQueue(orderId: string): void {
+    this.orderQueue = this.orderQueue.filter((order) => order.id !== orderId);
+  }
+
+  private releaseDriverCapacity(order: Order, now: Date): void {
+    if (!order.assignedDriverId) return;
+    const driver = this.drivers.get(order.assignedDriverId);
+    if (!driver) return;
+
+    driver.assignedOrders = driver.assignedOrders.filter((orderId) => orderId !== order.id);
+    if (order.status === OrderStatus.DELIVERED) {
+      driver.totalDeliveries += 1;
+    }
+
+    const hasActiveOrders = driver.assignedOrders.some((orderId) => {
+      const assignedOrder = this.orders.get(orderId);
+      return assignedOrder !== undefined && !TERMINAL_STATUSES.has(assignedOrder.status);
+    });
+
+    if (!hasActiveOrders) {
+      driver.status = DriverStatus.AVAILABLE;
+      driver.isAvailable = true;
+    }
+
+    driver.lastLocationUpdate = now;
+    this.store.saveDriver(driver);
+    this.emit('driver:updated', this.cloneDriver(driver));
+  }
+
+  private completeBatchIfDone(orderId: string, now: Date): void {
+    for (const batch of this.batches.values()) {
+      if (batch.completedAt || !batch.orderIds.includes(orderId)) continue;
+      const isComplete = batch.orderIds.every((id) => {
+        const order = this.orders.get(id);
+        return order !== undefined && TERMINAL_STATUSES.has(order.status);
+      });
+      if (isComplete) {
+        batch.completedAt = now;
+        this.store.saveBatch(batch);
+        this.emit('batch:completed', this.cloneBatch(batch));
+      }
+    }
+  }
+
+  private calculatePreparationMinutes(orders: Order[]): number {
+    return orders.reduce(
+      (longest, order) => Math.max(longest, Math.ceil(order.restaurant.preparationTime)),
+      0
+    );
+  }
+
   private selectDriver(orders: Order[]): Driver | undefined {
     const availableDrivers = this.getAvailableDispatchDrivers().filter(
-      (driver) =>
-        driver.assignedOrders.length + orders.length <= driver.maxOrdersPerBatch
+      (driver) => driver.assignedOrders.length + orders.length <= driver.maxOrdersPerBatch
     );
     if (availableDrivers.length === 0) return undefined;
 
@@ -277,6 +500,34 @@ export class BatchProcessingService {
     };
   }
 
+  private cloneOrder(order: Order): Order {
+    return {
+      ...order,
+      restaurant: { ...order.restaurant },
+      customer: { ...order.customer },
+      items: order.items.map((item) => ({ ...item })),
+      createdAt: new Date(order.createdAt),
+      updatedAt: new Date(order.updatedAt),
+      assignedAt: order.assignedAt ? new Date(order.assignedAt) : undefined,
+      pickedUpAt: order.pickedUpAt ? new Date(order.pickedUpAt) : undefined,
+      deliveredAt: order.deliveredAt ? new Date(order.deliveredAt) : undefined,
+      estimatedDeliveryTime: order.estimatedDeliveryTime
+        ? new Date(order.estimatedDeliveryTime)
+        : undefined
+    };
+  }
+
+  private cloneBatch(batch: BatchAssignment): BatchAssignment {
+    return {
+      ...batch,
+      orderIds: [...batch.orderIds],
+      deliverySequence: [...batch.deliverySequence],
+      createdAt: new Date(batch.createdAt),
+      startedAt: batch.startedAt ? new Date(batch.startedAt) : undefined,
+      completedAt: batch.completedAt ? new Date(batch.completedAt) : undefined
+    };
+  }
+
   private calculateRouteDistance(
     orders: Order[],
     sequence: string[],
@@ -304,6 +555,7 @@ export class BatchProcessingService {
         longitude: order.customer.longitude
       };
     }
+
     return totalDistance;
   }
 }
