@@ -10,6 +10,8 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "build": "tsc",
+    "lint": "node node_modules/eslint/bin/eslint.js src test",
+    "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:coverage": "jest --coverage"
   },
@@ -23,12 +25,16 @@
     "uuid": "^11.1.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/express": "^4.17.17",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
     "jest": "^30.5.2",
     "socket.io-client": "^4.8.4",
     "ts-node": "^10.9.1",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.72.0"
   }
 }

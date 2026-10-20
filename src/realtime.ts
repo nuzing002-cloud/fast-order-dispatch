@@ -1,10 +1,12 @@
 import { Server as HttpServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
+import { ApiKeyEntry, authenticate, normalizeApiKeyInput } from './auth';
 import { logger } from './logger';
 import { BatchProcessingService } from './services/BatchProcessingService';
 
 export interface RealtimeOptions {
   apiKey?: string;
+  apiKeys?: ApiKeyEntry[] | string;
   redisUrl?: string | null;
 }
 
@@ -17,11 +19,18 @@ export function attachRealtime(
     cors: { origin: process.env.CORS_ORIGIN ?? '*' }
   });
 
-  if (options.apiKey) {
+  const entries = normalizeApiKeyInput(options.apiKeys ?? options.apiKey);
+  if (entries.length > 0) {
     io.use((socket, next) => {
       const auth = socket.handshake.auth as { token?: unknown } | undefined;
       const headerToken = socket.handshake.headers['x-api-key'];
-      if (auth?.token === options.apiKey || headerToken === options.apiKey) {
+      const token =
+        typeof auth?.token === 'string'
+          ? auth.token
+          : typeof headerToken === 'string'
+            ? headerToken
+            : undefined;
+      if (token && authenticate(entries, token)) {
         next();
         return;
       }

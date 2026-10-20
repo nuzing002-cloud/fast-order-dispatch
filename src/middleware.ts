@@ -1,16 +1,23 @@
-import { createHash, randomUUID, timingSafeEqual } from 'crypto';
+import { randomUUID } from 'crypto';
 import { NextFunction, Request, RequestHandler, Response } from 'express';
+import {
+  ApiKeyInput,
+  authenticate,
+  AuthenticatedKey,
+  normalizeApiKeyInput,
+  Role
+} from './auth';
 import { logger } from './logger';
 
-const PUBLIC_PATHS = new Set(['/health', '/ready', '/openapi.json', '/docs']);
+export const PUBLIC_PATHS = new Set([
+  '/health',
+  '/ready',
+  '/openapi.json',
+  '/docs',
+  '/webhooks/payments'
+]);
 
-function safeEqual(left: string, right: string): boolean {
-  const leftDigest = createHash('sha256').update(left).digest();
-  const rightDigest = createHash('sha256').update(right).digest();
-  return timingSafeEqual(leftDigest, rightDigest);
-}
-
-function extractToken(request: Request): string | undefined {
+export function extractToken(request: Request): string | undefined {
   const header = request.header('authorization');
   if (header?.toLowerCase().startsWith('bearer ')) {
     return header.slice(7).trim();
@@ -19,19 +26,49 @@ function extractToken(request: Request): string | undefined {
   return apiKeyHeader?.trim() || undefined;
 }
 
-export function createAuthMiddleware(apiKey?: string): RequestHandler {
+export function createAuthMiddleware(input: ApiKeyInput): RequestHandler {
+  const entries = normalizeApiKeyInput(input);
+
   return (request: Request, response: Response, next: NextFunction) => {
-    if (!apiKey || PUBLIC_PATHS.has(request.path)) {
+    if (entries.length === 0 || PUBLIC_PATHS.has(request.path)) {
       next();
       return;
     }
+
     const token = extractToken(request);
-    if (!token || !safeEqual(token, apiKey)) {
+    const identity: AuthenticatedKey | undefined = token
+      ? authenticate(entries, token)
+      : undefined;
+    if (!identity) {
       response.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    request.auth = identity;
+    if (identity.role === 'viewer' && !isReadMethod(request.method)) {
+      response.status(403).json({ error: 'This API key is read-only' });
       return;
     }
     next();
   };
+}
+
+export function requireRole(...roles: Role[]): RequestHandler {
+  return (request: Request, response: Response, next: NextFunction) => {
+    if (!request.auth) {
+      next();
+      return;
+    }
+    if (!roles.includes(request.auth.role)) {
+      response.status(403).json({ error: `Requires role: ${roles.join(' or ')}` });
+      return;
+    }
+    next();
+  };
+}
+
+function isReadMethod(method: string): boolean {
+  return method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
 }
 
 export interface RateLimitOptions {
@@ -48,8 +85,9 @@ export function createRateLimiter(options: RateLimitOptions): RequestHandler {
       return;
     }
 
+    const max = request.auth?.limit ?? options.max;
     const now = Date.now();
-    const key = request.ip ?? 'unknown';
+    const key = rateLimitKey(request);
     let entry = hits.get(key);
     if (!entry || entry.resetAt <= now) {
       entry = { count: 0, resetAt: now + options.windowMs };
@@ -57,11 +95,11 @@ export function createRateLimiter(options: RateLimitOptions): RequestHandler {
     }
     entry.count += 1;
 
-    response.setHeader('X-RateLimit-Limit', String(options.max));
-    response.setHeader('X-RateLimit-Remaining', String(Math.max(0, options.max - entry.count)));
+    response.setHeader('X-RateLimit-Limit', String(max));
+    response.setHeader('X-RateLimit-Remaining', String(Math.max(0, max - entry.count)));
     response.setHeader('X-RateLimit-Reset', String(Math.ceil(entry.resetAt / 1000)));
 
-    if (entry.count > options.max) {
+    if (entry.count > max) {
       const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
       response.setHeader('Retry-After', String(retryAfter));
       response.status(429).json({ error: 'Too many requests' });
@@ -76,6 +114,11 @@ export function createRateLimiter(options: RateLimitOptions): RequestHandler {
 
     next();
   };
+}
+
+export function rateLimitKey(request: Request): string {
+  const ip = request.ip ?? 'unknown';
+  return request.auth ? `${ip}:${request.auth.keyId}` : ip;
 }
 
 export function securityHeaders(): RequestHandler {
@@ -109,7 +152,9 @@ export function requestLogger(): RequestHandler {
         path: request.originalUrl,
         status: response.statusCode,
         durationMs: Number(durationMs.toFixed(1)),
-        ip: request.ip
+        ip: request.ip,
+        actor: request.auth?.label,
+        role: request.auth?.role
       });
     });
 

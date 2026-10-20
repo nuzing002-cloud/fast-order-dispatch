@@ -79,6 +79,15 @@ export const openApiSpec = {
       },
       post: {
         summary: 'Create an order, charge it, and attempt dispatch',
+        parameters: [
+          {
+            name: 'Idempotency-Key',
+            in: 'header',
+            required: false,
+            description: 'Replays the stored response for the same key and body (24h by default).',
+            schema: { type: 'string', maxLength: 255 }
+          }
+        ],
         requestBody: {
           required: true,
           content: { 'application/json': { schema: { $ref: '#/components/schemas/OrderInput' } } }
@@ -86,7 +95,8 @@ export const openApiSpec = {
         responses: {
           '201': { description: 'Created and charged' },
           '400': { description: 'Validation error' },
-          '402': { description: 'Payment failed; order stored but not queued' }
+          '402': { description: 'Payment failed; order stored but not queued' },
+          '409': { description: 'Idempotency-Key reused with a different request' }
         }
       }
     },
@@ -193,6 +203,35 @@ export const openApiSpec = {
         responses: { '200': { description: 'Metrics snapshot' } }
       }
     },
+    '/audit': {
+      get: {
+        summary: 'List audit entries (admin only)',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } }
+        ],
+        responses: {
+          '200': { description: 'Paginated audit entries' },
+          '403': { description: 'Admin role required' }
+        }
+      }
+    },
+    '/webhooks/payments': {
+      post: {
+        summary: 'Payment provider webhook (signature verified, no API key required)',
+        security: [],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object' } } }
+        },
+        responses: {
+          '200': { description: 'Webhook accepted' },
+          '400': { description: 'Invalid signature or payload' },
+          '404': { description: 'Webhook disabled (mock provider)' },
+          '503': { description: 'Webhook secret not configured' }
+        }
+      }
+    },
     '/dispatch/process': {
       post: {
         summary: 'Run one dispatch cycle',
@@ -265,6 +304,20 @@ export const openApiSpec = {
           notes: { type: 'string' }
         }
       },
+      AuditEntry: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          timestamp: { type: 'string', format: 'date-time' },
+          actor: { type: 'string' },
+          role: { type: 'string' },
+          ip: { type: 'string' },
+          action: { type: 'string' },
+          entityType: { type: 'string', enum: ['order', 'payment', 'driver', 'batch', 'system'] },
+          entityId: { type: 'string' },
+          details: { type: 'object' }
+        }
+      },
       Order: {
         allOf: [
           { $ref: '#/components/schemas/OrderInput' },
@@ -334,6 +387,9 @@ export const openApiSpec = {
           method: { type: 'string' },
           kind: { type: 'string', enum: ['charge', 'refund'] },
           status: { type: 'string' },
+          provider: { type: 'string' },
+          providerTransactionId: { type: 'string' },
+          sourceTransactionId: { type: 'string' },
           createdAt: { type: 'string', format: 'date-time' },
           processedAt: { type: 'string', format: 'date-time' },
           notes: { type: 'string' }

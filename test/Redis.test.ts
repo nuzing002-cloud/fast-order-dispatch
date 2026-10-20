@@ -73,4 +73,43 @@ describeRedis('redis adapter', () => {
       ]);
     }
   });
+
+  test('shares rate limit counters across instances', async () => {
+    const options = {
+      rateLimit: { windowMs: 60_000, max: 2 },
+      redisUrl: redisUrl as string
+    };
+    const appA = createDispatchApp(options);
+    const appB = createDispatchApp(options);
+    const serverA = appA.listen(0, '127.0.0.1');
+    const serverB = appB.listen(0, '127.0.0.1');
+    await Promise.all([
+      new Promise<void>((resolve) => serverA.once('listening', resolve)),
+      new Promise<void>((resolve) => serverB.once('listening', resolve))
+    ]);
+    const urlA = `http://127.0.0.1:${(serverA.address() as AddressInfo).port}/drivers`;
+    const urlB = `http://127.0.0.1:${(serverB.address() as AddressInfo).port}/drivers`;
+
+    try {
+      const first = await fetch(urlA);
+      expect(first.status).toBe(200);
+      expect(first.headers.get('x-ratelimit-remaining')).toBe('1');
+
+      const second = await fetch(urlB);
+      expect(second.status).toBe(200);
+      expect(second.headers.get('x-ratelimit-remaining')).toBe('0');
+
+      const third = await fetch(urlA);
+      expect(third.status).toBe(429);
+    } finally {
+      await Promise.all([
+        new Promise<void>((resolve) => serverA.close(() => resolve())),
+        new Promise<void>((resolve) => serverB.close(() => resolve()))
+      ]);
+      await Promise.all([
+        appA.locals.rateLimiter.close(),
+        appB.locals.rateLimiter.close()
+      ]);
+    }
+  });
 });

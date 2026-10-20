@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { InMemoryStore, Store } from '../store/Store';
 import {
+  AuditLogEntry,
   BatchAssignment,
   Driver,
   DriverStatus,
@@ -58,6 +59,7 @@ export class BatchProcessingService extends EventEmitter {
   private readonly orders = new Map<string, Order>();
   private readonly batches = new Map<string, BatchAssignment>();
   private readonly payments = new Map<string, PaymentTransaction>();
+  private readonly audits: AuditLogEntry[] = [];
   private orderQueue: Order[] = [];
   private processingInterval: NodeJS.Timeout | null = null;
   private isProcessing = false;
@@ -87,6 +89,7 @@ export class BatchProcessingService extends EventEmitter {
     for (const order of state.orders) this.orders.set(order.id, order);
     for (const batch of state.batches) this.batches.set(batch.id, batch);
     for (const payment of state.payments) this.payments.set(payment.id, payment);
+    for (const audit of state.audits ?? []) this.audits.push(audit);
     this.orderQueue = [...this.orders.values()]
       .filter((order) => order.status === OrderStatus.PENDING)
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
@@ -270,6 +273,41 @@ export class BatchProcessingService extends EventEmitter {
       .filter((payment) => payment.orderId === orderId)
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
       .map((payment) => this.clonePayment(payment));
+  }
+
+  getPayment(paymentId: string): PaymentTransaction | undefined {
+    const payment = this.payments.get(paymentId);
+    return payment ? this.clonePayment(payment) : undefined;
+  }
+
+  findPaymentByProviderTransactionId(providerTransactionId: string): PaymentTransaction | undefined {
+    for (const payment of this.payments.values()) {
+      if (payment.providerTransactionId === providerTransactionId) {
+        return this.clonePayment(payment);
+      }
+    }
+    return undefined;
+  }
+
+  recordAudit(input: Omit<AuditLogEntry, 'id' | 'timestamp'>): AuditLogEntry {
+    const entry: AuditLogEntry = {
+      ...input,
+      id: `audit_${uuidv4()}`,
+      timestamp: new Date()
+    };
+    this.audits.push(entry);
+    this.store.saveAudit(entry);
+    return this.cloneAudit(entry);
+  }
+
+  getAuditLog(limit = 50, offset = 0): { entries: AuditLogEntry[]; total: number } {
+    const sorted = [...this.audits].sort(
+      (left, right) => right.timestamp.getTime() - left.timestamp.getTime()
+    );
+    return {
+      entries: sorted.slice(offset, offset + limit).map((entry) => this.cloneAudit(entry)),
+      total: sorted.length
+    };
   }
 
   getOrder(orderId: string): Order | undefined {
@@ -638,6 +676,14 @@ export class BatchProcessingService extends EventEmitter {
       ...payment,
       createdAt: new Date(payment.createdAt),
       processedAt: payment.processedAt ? new Date(payment.processedAt) : undefined
+    };
+  }
+
+  private cloneAudit(entry: AuditLogEntry): AuditLogEntry {
+    return {
+      ...entry,
+      timestamp: new Date(entry.timestamp),
+      details: entry.details ? { ...entry.details } : undefined
     };
   }
 

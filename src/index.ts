@@ -2,25 +2,35 @@ import cors from 'cors';
 import express, { Express, NextFunction, Request, Response } from 'express';
 import { createServer } from 'http';
 import { v4 as uuidv4 } from 'uuid';
-import { loadConfig } from './config';
+import { ApiKeyInput } from './auth';
+import { AppConfig, loadConfig } from './config';
 import { ConflictError, HttpError, NotFoundError, ValidationError } from './errors';
+import { createIdempotencyMiddleware, IdempotencyStore } from './idempotency';
 import { logger } from './logger';
 import {
   createAuthMiddleware,
   createRateLimiter,
   requestLogger,
   RequestWithId,
+  requireRole,
   securityHeaders
 } from './middleware';
 import { openApiSpec } from './openapi';
+import { createRedisRateLimiter, RateLimiterHandle } from './rateLimiter';
 import { attachRealtime } from './realtime';
 import {
   BatchProcessingService,
   DISPATCH_DRIVER_ID,
   DriverPatch
 } from './services/BatchProcessingService';
+import {
+  HttpPaymentGateway,
+  StripePaymentGateway,
+  verifyHmacSignature,
+  verifyStripeSignature
+} from './services/PaymentGateways';
 import { PaymentService } from './services/PaymentService';
-import { InMemoryStore } from './store/Store';
+import { InMemoryStore, Store } from './store/Store';
 import { SqliteStore } from './store/SqliteStore';
 import {
   Customer,
@@ -30,6 +40,7 @@ import {
   OrderItem,
   OrderStatus,
   PaymentStatus,
+  PaymentTransaction,
   Restaurant
 } from './types/order';
 
@@ -266,12 +277,22 @@ const docsHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
+export interface PaymentWebhookOptions {
+  provider: 'mock' | 'http' | 'stripe';
+  secret?: string;
+}
+
 export interface DispatchAppOptions {
   service?: BatchProcessingService;
   paymentService?: PaymentService;
   apiKey?: string;
+  apiKeys?: ApiKeyInput;
   rateLimit?: { windowMs: number; max: number };
+  redisUrl?: string | null;
   trustProxy?: boolean;
+  idempotencyStore?: IdempotencyStore;
+  idempotencyTtlMs?: number;
+  paymentWebhook?: PaymentWebhookOptions;
 }
 
 export function createDispatchApp(options: DispatchAppOptions = {}): Express {
@@ -284,9 +305,61 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
   app.use(securityHeaders());
   app.use(requestLogger());
   app.use(cors({ origin: process.env.CORS_ORIGIN ?? '*' }));
-  if (options.rateLimit) app.use(createRateLimiter(options.rateLimit));
-  app.use(createAuthMiddleware(options.apiKey));
+
+  app.post(
+    '/webhooks/payments',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    (request: Request, response: Response, next: NextFunction) => {
+      try {
+        handlePaymentWebhook(request, response, service, options.paymentWebhook);
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
   app.use(express.json({ limit: '1mb' }));
+  app.use(createAuthMiddleware(options.apiKeys ?? options.apiKey));
+
+  if (options.rateLimit) {
+    if (options.redisUrl) {
+      const limiter: RateLimiterHandle = createRedisRateLimiter({
+        url: options.redisUrl,
+        windowMs: options.rateLimit.windowMs,
+        max: options.rateLimit.max
+      });
+      app.locals.rateLimiter = limiter;
+      app.use(limiter.middleware);
+    } else {
+      app.use(createRateLimiter(options.rateLimit));
+    }
+  }
+
+  if (options.idempotencyStore) {
+    app.use(
+      createIdempotencyMiddleware(options.idempotencyStore, {
+        ttlMs: options.idempotencyTtlMs
+      })
+    );
+  }
+
+  const audit = (
+    request: Request,
+    action: string,
+    entityType: 'order' | 'payment' | 'driver' | 'batch' | 'system',
+    entityId: string,
+    details?: Record<string, unknown>
+  ): void => {
+    service.recordAudit({
+      actor: request.auth?.label ?? 'anonymous',
+      role: request.auth?.role ?? 'none',
+      ip: request.ip,
+      action,
+      entityType,
+      entityId,
+      details
+    });
+  };
 
   app.get('/health', (_request: Request, response: Response) => {
     response.json({
@@ -322,6 +395,9 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     try {
       const driver = parseDriver(request.body);
       service.registerDriver(driver);
+      audit(request, 'driver.registered', 'driver', driver.id, {
+        vehicle: driver.vehicle
+      });
       response.status(201).json({
         driver: service.getDriver(driver.id) ?? driver,
         dispatchDriverId: DISPATCH_DRIVER_ID
@@ -346,6 +422,7 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     try {
       const patch = parseDriverPatch(request.body);
       const driver = service.updateDriverDetails(routeParam(request, 'id'), patch);
+      audit(request, 'driver.updated', 'driver', driver.id, { fields: Object.keys(patch) });
       response.json({ driver });
     } catch (error) {
       next(error);
@@ -414,9 +491,19 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       const transaction = await paymentService.processPayment(order, paymentMethod ?? 'card');
       order.paymentStatus = transaction.status;
       service.recordPayment(transaction);
+      service.addOrder(order, transaction.status === PaymentStatus.COMPLETED);
+      audit(request, 'order.created', 'order', order.id, {
+        totalAmount: order.totalAmount,
+        paymentStatus: transaction.status
+      });
+      audit(request, 'payment.charge', 'payment', transaction.id, {
+        orderId: order.id,
+        amount: transaction.amount,
+        status: transaction.status,
+        provider: transaction.provider
+      });
 
       if (transaction.status !== PaymentStatus.COMPLETED) {
-        service.addOrder(order, false);
         response.status(402).json({
           error: transaction.notes ?? 'Payment failed',
           order: service.getOrder(order.id),
@@ -425,7 +512,6 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         return;
       }
 
-      service.addOrder(order);
       const batch = await service.processBatch();
       response.status(201).json({
         order: service.getOrder(order.id),
@@ -457,6 +543,12 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       const transaction = await paymentService.processPayment(order, method ?? 'card');
       service.recordPayment(transaction);
       service.updatePaymentStatus(orderId, transaction.status);
+      audit(request, 'payment.charge_retry', 'payment', transaction.id, {
+        orderId,
+        amount: transaction.amount,
+        status: transaction.status,
+        provider: transaction.provider
+      });
 
       if (transaction.status !== PaymentStatus.COMPLETED) {
         response.status(402).json({
@@ -484,7 +576,7 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     }
   });
 
-  app.post('/orders/:id/refund', async (request: Request, response: Response, next: NextFunction) => {
+  app.post('/orders/:id/refund', requireRole('admin'), async (request: Request, response: Response, next: NextFunction) => {
     try {
       const orderId = routeParam(request, 'id');
       const order = service.getOrder(orderId);
@@ -496,8 +588,21 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       const method = isRecord(request.body)
         ? optionalString(request.body.method, 'method')
         : undefined;
-      const transaction = await paymentService.refund(order, method ?? 'card');
+      const originalCharge = [...service.getPayments(orderId)]
+        .reverse()
+        .find((payment) => payment.kind !== 'refund' && payment.status === PaymentStatus.COMPLETED);
+      const transaction = await paymentService.refund(
+        order,
+        method ?? 'card',
+        originalCharge?.providerTransactionId
+      );
       service.recordPayment(transaction);
+      audit(request, 'payment.refund', 'payment', transaction.id, {
+        orderId,
+        amount: transaction.amount,
+        status: transaction.status,
+        provider: transaction.provider
+      });
 
       if (transaction.status !== PaymentStatus.COMPLETED) {
         response.status(402).json({
@@ -524,6 +629,7 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         ? parseOrderStatus(request.body.status)
         : parseOrderStatus(undefined);
       const order = service.updateOrderStatus(routeParam(request, 'id'), status);
+      audit(request, 'order.status_changed', 'order', order.id, { status });
       response.json({ order });
     } catch (error) {
       next(error);
@@ -549,9 +655,25 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     response.json(service.getMetrics());
   });
 
-  app.post('/dispatch/process', async (_request: Request, response: Response, next: NextFunction) => {
+  app.get('/audit', requireRole('admin'), (request: Request, response: Response, next: NextFunction) => {
+    try {
+      const { limit, offset } = parsePagination(request.query);
+      const { entries, total } = service.getAuditLog(limit, offset);
+      response.json({ entries, total, limit, offset });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/dispatch/process', async (request: Request, response: Response, next: NextFunction) => {
     try {
       const batch = await service.processBatch();
+      if (batch) {
+        audit(request, 'dispatch.processed', 'batch', batch.id, {
+          orderIds: batch.orderIds,
+          driverId: batch.driverId
+        });
+      }
       response.json({ batch, queueSize: service.getQueueSize() });
     } catch (error) {
       next(error);
@@ -600,15 +722,197 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
   return app;
 }
 
-const store = process.env.DB_PATH ? new SqliteStore(process.env.DB_PATH) : new InMemoryStore();
+export function createPaymentService(config: AppConfig): PaymentService {
+  if (config.paymentProvider === 'stripe' && config.stripeSecretKey) {
+    return new PaymentService(
+      new StripePaymentGateway({
+        secretKey: config.stripeSecretKey,
+        apiBase: config.stripeApiBase
+      }),
+      'stripe'
+    );
+  }
+  if (config.paymentProvider === 'http' && config.paymentGatewayUrl) {
+    return new PaymentService(
+      new HttpPaymentGateway({
+        url: config.paymentGatewayUrl,
+        apiKey: config.paymentGatewayApiKey
+      }),
+      'http'
+    );
+  }
+  return new PaymentService();
+}
+
+function mapProviderStatus(value: unknown): PaymentStatus | undefined {
+  if (typeof value !== 'string') return undefined;
+  switch (value.toLowerCase()) {
+    case 'succeeded':
+    case 'paid':
+    case 'completed':
+      return PaymentStatus.COMPLETED;
+    case 'failed':
+    case 'canceled':
+    case 'cancelled':
+    case 'declined':
+      return PaymentStatus.FAILED;
+    case 'refunded':
+      return PaymentStatus.REFUNDED;
+    case 'processing':
+    case 'pending':
+      return PaymentStatus.PROCESSING;
+    default:
+      return undefined;
+  }
+}
+
+function extractWebhookUpdate(
+  provider: 'mock' | 'http' | 'stripe',
+  payload: Record<string, unknown>
+): { providerTransactionId: string; status: PaymentStatus } | undefined {
+  if (provider === 'stripe') {
+    const type = typeof payload.type === 'string' ? payload.type : '';
+    const data = isRecord(payload.data) && isRecord(payload.data.object)
+      ? payload.data.object
+      : undefined;
+    if (!data) return undefined;
+    const providerTransactionId =
+      typeof data.payment_intent === 'string'
+        ? data.payment_intent
+        : typeof data.id === 'string'
+          ? data.id
+          : undefined;
+    if (!providerTransactionId) return undefined;
+
+    if (type === 'payment_intent.succeeded') {
+      return { providerTransactionId, status: PaymentStatus.COMPLETED };
+    }
+    if (type === 'payment_intent.payment_failed' || type === 'payment_intent.canceled') {
+      return { providerTransactionId, status: PaymentStatus.FAILED };
+    }
+    if (type === 'charge.refunded' || type === 'refund.succeeded') {
+      return { providerTransactionId, status: PaymentStatus.REFUNDED };
+    }
+    return undefined;
+  }
+
+  const providerTransactionId =
+    typeof payload.transactionId === 'string'
+      ? payload.transactionId
+      : typeof payload.providerTransactionId === 'string'
+        ? payload.providerTransactionId
+        : typeof payload.id === 'string'
+          ? payload.id
+          : undefined;
+  const status = mapProviderStatus(payload.status);
+  if (!providerTransactionId || !status) return undefined;
+  return { providerTransactionId, status };
+}
+
+function handlePaymentWebhook(
+  request: Request,
+  response: Response,
+  service: BatchProcessingService,
+  options: PaymentWebhookOptions | undefined
+): void {
+  const provider = options?.provider ?? 'mock';
+  if (provider === 'mock' || !options?.secret) {
+    response.status(provider === 'mock' ? 404 : 503).json({
+      error: provider === 'mock' ? 'Payment webhook is disabled' : 'Webhook secret is not configured'
+    });
+    return;
+  }
+
+  const rawBody = Buffer.isBuffer(request.body)
+    ? request.body
+    : typeof request.body === 'string'
+      ? Buffer.from(request.body)
+      : Buffer.alloc(0);
+  const verified =
+    provider === 'stripe'
+      ? verifyStripeSignature(rawBody, request.header('stripe-signature'), options.secret)
+      : verifyHmacSignature(
+          rawBody,
+          request.header('x-webhook-signature') ?? request.header('x-signature'),
+          options.secret
+        );
+  if (!verified) {
+    response.status(400).json({ error: 'Invalid webhook signature' });
+    return;
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(rawBody.toString('utf8')) as unknown;
+    if (!isRecord(parsed)) throw new Error('invalid payload');
+    payload = parsed;
+  } catch {
+    response.status(400).json({ error: 'Invalid webhook payload' });
+    return;
+  }
+
+  const update = extractWebhookUpdate(provider, payload);
+  if (!update) {
+    response.json({ received: true, matched: false });
+    return;
+  }
+
+  const payment = service.findPaymentByProviderTransactionId(update.providerTransactionId);
+  if (!payment) {
+    response.json({ received: true, matched: false });
+    return;
+  }
+
+  const updated: PaymentTransaction = {
+    ...payment,
+    status: update.status,
+    processedAt: new Date()
+  };
+  service.recordPayment(updated);
+  if (updated.kind !== 'refund') {
+    service.updatePaymentStatus(updated.orderId, update.status);
+  } else if (update.status === PaymentStatus.REFUNDED) {
+    service.updatePaymentStatus(updated.orderId, PaymentStatus.REFUNDED);
+  }
+  service.recordAudit({
+    actor: 'payment-provider',
+    role: 'provider',
+    ip: request.ip,
+    action: 'payment.webhook',
+    entityType: 'payment',
+    entityId: updated.id,
+    details: {
+      provider,
+      providerTransactionId: update.providerTransactionId,
+      status: update.status
+    }
+  });
+  response.json({ received: true, matched: true });
+}
+
+const store: Store = process.env.DB_PATH
+  ? new SqliteStore(process.env.DB_PATH)
+  : new InMemoryStore();
 export const dispatchService = new BatchProcessingService(3, store, {
   dispatchDriverIds: config.dispatchDriverIds
 });
+export const paymentService = createPaymentService(config);
 export const app = createDispatchApp({
   service: dispatchService,
-  apiKey: config.apiKey,
+  paymentService,
+  apiKeys: config.apiKeys.length > 0 ? config.apiKeys : config.apiKey,
   rateLimit: { windowMs: config.rateLimitWindowMs, max: config.rateLimitMax },
-  trustProxy: config.trustProxy
+  redisUrl: config.redisUrl,
+  trustProxy: config.trustProxy,
+  idempotencyStore: store,
+  idempotencyTtlMs: config.idempotencyTtlMs,
+  paymentWebhook: {
+    provider: config.paymentProvider,
+    secret:
+      config.paymentProvider === 'stripe'
+        ? config.stripeWebhookSecret
+        : config.paymentWebhookSecret
+  }
 });
 
 export interface StartServerOptions {
@@ -626,8 +930,8 @@ export function startServer(options: StartServerOptions = {}) {
 
   const server = createServer(app);
   const io = attachRealtime(server, dispatchService, {
-    apiKey: config.apiKey,
-    redisUrl: process.env.REDIS_URL
+    apiKeys: config.apiKeys.length > 0 ? config.apiKeys : config.apiKey,
+    redisUrl: config.redisUrl
   });
 
   const interval = Number(process.env.AUTO_PROCESS_INTERVAL_MS ?? 0);
@@ -642,9 +946,11 @@ export function startServer(options: StartServerOptions = {}) {
       host,
       port: boundPort,
       storage: process.env.DB_PATH ? 'sqlite' : 'memory',
-      auth: config.apiKey ? 'api-key' : 'disabled',
+      auth: config.apiKeys.length > 0 ? `${config.apiKeys.length} api key(s)` : 'disabled',
       rateLimit: config.rateLimitMax > 0 ? `${config.rateLimitMax}/${config.rateLimitWindowMs}ms` : 'disabled',
-      redis: Boolean(process.env.REDIS_URL)
+      rateLimitBackend: config.redisUrl ? 'redis' : 'memory',
+      paymentProvider: config.paymentProvider,
+      redis: Boolean(config.redisUrl)
     });
     logger.info('dispatch_restricted', { driverIds: dispatchService.getDispatchDriverIds() });
   });
@@ -657,7 +963,9 @@ if (require.main === module) {
   const shutdown = (): void => {
     logger.info('shutting_down');
     dispatchService.stopAutoProcessing();
-    io.close(() => {
+    const limiter = app.locals.rateLimiter as RateLimiterHandle | undefined;
+    io.close(async () => {
+      await limiter?.close();
       store.close();
       process.exit(0);
     });

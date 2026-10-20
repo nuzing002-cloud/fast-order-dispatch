@@ -53,8 +53,10 @@ export interface Order {
   restaurant: Restaurant;
   customer: Customer;
   items: OrderItem[];
+  /** Final amount charged to the customer, including deliveryFee. */
   totalAmount: number;
   deliveryFee: number;
+  /** Sum of items before the delivery fee. */
   status: OrderStatus;
   paymentStatus: PaymentStatus;
   createdAt: Date;
@@ -114,9 +116,27 @@ export interface PaymentTransaction {
   kind?: 'charge' | 'refund';
   status: PaymentStatus;
   transactionId?: string;
+  /** Payment provider that produced this transaction (mock, http, stripe). */
+  provider?: string;
+  /** Identifier assigned by the payment provider. */
+  providerTransactionId?: string;
+  /** Provider transaction this refund refers to. */
+  sourceTransactionId?: string;
   createdAt: Date;
   processedAt?: Date;
   notes?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: Date;
+  actor: string;
+  role: string;
+  ip?: string;
+  action: string;
+  entityType: 'order' | 'payment' | 'driver' | 'batch' | 'system';
+  entityId: string;
+  details?: Record<string, unknown>;
 }
 
 export interface SystemMetrics {

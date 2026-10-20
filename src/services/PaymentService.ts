@@ -1,9 +1,17 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Order, PaymentStatus, PaymentTransaction } from '../types/order';
 
+export type GatewayResult =
+  | boolean
+  | {
+      success: boolean;
+      providerTransactionId?: string;
+      notes?: string;
+    };
+
 export interface PaymentGateway {
-  charge(order: Order, transaction: PaymentTransaction): Promise<boolean>;
-  refund(order: Order, transaction: PaymentTransaction): Promise<boolean>;
+  charge(order: Order, transaction: PaymentTransaction): Promise<GatewayResult>;
+  refund(order: Order, transaction: PaymentTransaction): Promise<GatewayResult>;
 }
 
 const GATEWAY_DELAY_MS = 150;
@@ -28,7 +36,10 @@ export class MockPaymentGateway implements PaymentGateway {
 }
 
 export class PaymentService {
-  constructor(private readonly gateway: PaymentGateway = new MockPaymentGateway()) {}
+  constructor(
+    private readonly gateway: PaymentGateway = new MockPaymentGateway(),
+    readonly provider: string = 'mock'
+  ) {}
 
   async processPayment(order: Order, method: string = 'card'): Promise<PaymentTransaction> {
     const transaction: PaymentTransaction = {
@@ -38,13 +49,18 @@ export class PaymentService {
       method,
       kind: 'charge',
       status: PaymentStatus.PROCESSING,
+      provider: this.provider,
       createdAt: new Date()
     };
 
     return this.execute(transaction, () => this.gateway.charge(order, transaction), 'Payment failed');
   }
 
-  async refund(order: Order, method: string = 'card'): Promise<PaymentTransaction> {
+  async refund(
+    order: Order,
+    method: string = 'card',
+    sourceTransactionId?: string
+  ): Promise<PaymentTransaction> {
     const transaction: PaymentTransaction = {
       id: `tx_${uuidv4()}`,
       orderId: order.id,
@@ -52,6 +68,8 @@ export class PaymentService {
       method,
       kind: 'refund',
       status: PaymentStatus.PROCESSING,
+      provider: this.provider,
+      sourceTransactionId,
       createdAt: new Date()
     };
 
@@ -60,14 +78,19 @@ export class PaymentService {
 
   private async execute(
     transaction: PaymentTransaction,
-    operation: () => Promise<boolean>,
+    operation: () => Promise<GatewayResult>,
     failureNote: string
   ): Promise<PaymentTransaction> {
     try {
-      const success = await operation();
+      const result = await operation();
+      const success = typeof result === 'boolean' ? result : result.success;
+      if (typeof result !== 'boolean') {
+        transaction.providerTransactionId = result.providerTransactionId;
+        if (result.notes) transaction.notes = result.notes;
+      }
       transaction.status = success ? PaymentStatus.COMPLETED : PaymentStatus.FAILED;
       transaction.processedAt = new Date();
-      if (!success) transaction.notes = failureNote;
+      if (!success && !transaction.notes) transaction.notes = failureNote;
       return transaction;
     } catch (error) {
       transaction.status = PaymentStatus.FAILED;

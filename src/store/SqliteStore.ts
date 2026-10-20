@@ -1,6 +1,7 @@
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { BatchAssignment, Driver, Order, PaymentTransaction } from '../types/order';
+import { IdempotencyRecord } from '../idempotency';
+import { AuditLogEntry, BatchAssignment, Driver, Order, PaymentTransaction } from '../types/order';
 import { StateSnapshot, Store } from './Store';
 
 const DATE_KEYS = new Set([
@@ -13,7 +14,8 @@ const DATE_KEYS = new Set([
   'lastLocationUpdate',
   'startedAt',
   'completedAt',
-  'processedAt'
+  'processedAt',
+  'timestamp'
 ]);
 
 function parseJson<T>(json: string): T {
@@ -41,6 +43,8 @@ export class SqliteStore implements Store {
       CREATE TABLE IF NOT EXISTS drivers (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS audits (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS idempotency (key TEXT PRIMARY KEY, data TEXT NOT NULL);
     `);
   }
 
@@ -60,13 +64,34 @@ export class SqliteStore implements Store {
     this.upsert('payments', payment.id, payment);
   }
 
+  saveAudit(entry: AuditLogEntry): void {
+    this.upsert('audits', entry.id, entry);
+  }
+
   load(): StateSnapshot {
     return {
       orders: this.readAll<Order>('orders'),
       drivers: this.readAll<Driver>('drivers'),
       batches: this.readAll<BatchAssignment>('batches'),
-      payments: this.readAll<PaymentTransaction>('payments')
+      payments: this.readAll<PaymentTransaction>('payments'),
+      audits: this.readAll<AuditLogEntry>('audits')
     };
+  }
+
+  getIdempotency(key: string): IdempotencyRecord | undefined {
+    const row = this.database
+      .prepare('SELECT data FROM idempotency WHERE key = ?')
+      .get(key) as { data: string } | undefined;
+    return row ? parseJson<IdempotencyRecord>(row.data) : undefined;
+  }
+
+  saveIdempotency(record: IdempotencyRecord): void {
+    this.database
+      .prepare(
+        `INSERT INTO idempotency (key, data) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET data = excluded.data`
+      )
+      .run(record.key, JSON.stringify(record));
   }
 
   ping(): boolean {
@@ -83,7 +108,7 @@ export class SqliteStore implements Store {
   }
 
   private upsert(
-    table: 'orders' | 'drivers' | 'batches' | 'payments',
+    table: 'orders' | 'drivers' | 'batches' | 'payments' | 'audits',
     id: string,
     value: unknown
   ): void {
@@ -95,7 +120,7 @@ export class SqliteStore implements Store {
       .run(id, JSON.stringify(value));
   }
 
-  private readAll<T>(table: 'orders' | 'drivers' | 'batches' | 'payments'): T[] {
+  private readAll<T>(table: 'orders' | 'drivers' | 'batches' | 'payments' | 'audits'): T[] {
     const rows = this.database.prepare(`SELECT data FROM ${table}`).all() as Array<{ data: string }>;
     return rows.map((row) => parseJson<T>(row.data));
   }
