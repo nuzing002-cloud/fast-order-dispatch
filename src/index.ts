@@ -1,6 +1,13 @@
 import cors from 'cors';
-import express, { Express, NextFunction, Request, Response } from 'express';
+import express, {
+  Express,
+  NextFunction,
+  Request,
+  RequestHandler,
+  Response
+} from 'express';
 import { createServer } from 'http';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { ApiKeyInput } from './auth';
 import { AppConfig, loadConfig } from './config';
@@ -16,6 +23,7 @@ import {
   securityHeaders
 } from './middleware';
 import { openApiSpec } from './openapi';
+import { renderPrometheusMetrics } from './prometheus';
 import { createRedisRateLimiter, RateLimiterHandle } from './rateLimiter';
 import { attachRealtime } from './realtime';
 import {
@@ -30,8 +38,7 @@ import {
   verifyStripeSignature
 } from './services/PaymentGateways';
 import { PaymentService } from './services/PaymentService';
-import { InMemoryStore, Store } from './store/Store';
-import { SqliteStore } from './store/SqliteStore';
+import { createDispatchStore } from './store/createStore';
 import {
   Customer,
   Driver,
@@ -263,19 +270,33 @@ function parsePagination(query: Request['query']): { limit: number; offset: numb
   return { limit, offset };
 }
 
+const swaggerUiPath = path.dirname(require.resolve('swagger-ui-dist'));
+
 const docsHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>fast-order-dispatch API</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <link rel="stylesheet" href="/swagger-ui/swagger-ui.css" />
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="/swagger-ui/swagger-ui-bundle.js"></script>
   <script>SwaggerUIBundle({ url: '/openapi.json', dom_id: '#swagger-ui' });</script>
 </body>
 </html>`;
+
+type AsyncRoute = (
+  request: Request,
+  response: Response,
+  next: NextFunction
+) => Promise<unknown>;
+
+function asyncHandler(handler: AsyncRoute): RequestHandler {
+  return (request, response, next) => {
+    void handler(request, response, next).catch(next);
+  };
+}
 
 export interface PaymentWebhookOptions {
   provider: 'mock' | 'http' | 'stripe';
@@ -287,6 +308,7 @@ export interface DispatchAppOptions {
   paymentService?: PaymentService;
   apiKey?: string;
   apiKeys?: ApiKeyInput;
+  corsOrigins?: string[];
   rateLimit?: { windowMs: number; max: number };
   redisUrl?: string | null;
   trustProxy?: boolean;
@@ -299,23 +321,25 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
   const service = options.service ?? new BatchProcessingService();
   const paymentService = options.paymentService ?? new PaymentService();
   const app = express();
+  app.disable('x-powered-by');
 
   if (options.trustProxy) app.set('trust proxy', true);
 
   app.use(securityHeaders());
   app.use(requestLogger());
-  app.use(cors({ origin: process.env.CORS_ORIGIN ?? '*' }));
+  app.use(cors({ origin: options.corsOrigins ?? ['*'] }));
+  app.use(
+    '/swagger-ui',
+    express.static(swaggerUiPath, { index: false, maxAge: '1h' })
+  );
+  app.use(express.static(path.join(__dirname, '..', 'public')));
 
   app.post(
     '/webhooks/payments',
     express.raw({ type: 'application/json', limit: '1mb' }),
-    (request: Request, response: Response, next: NextFunction) => {
-      try {
-        handlePaymentWebhook(request, response, service, options.paymentWebhook);
-      } catch (error) {
-        next(error);
-      }
-    }
+    asyncHandler(async (request, response) => {
+      await handlePaymentWebhook(request, response, service, options.paymentWebhook);
+    })
   );
 
   app.use(express.json({ limit: '1mb' }));
@@ -343,14 +367,14 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     );
   }
 
-  const audit = (
+  const audit = async (
     request: Request,
     action: string,
     entityType: 'order' | 'payment' | 'driver' | 'batch' | 'system',
     entityId: string,
     details?: Record<string, unknown>
-  ): void => {
-    service.recordAudit({
+  ): Promise<void> => {
+    await service.recordAudit({
       actor: request.auth?.label ?? 'anonymous',
       role: request.auth?.role ?? 'none',
       ip: request.ip,
@@ -361,23 +385,30 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     });
   };
 
-  app.get('/health', (_request: Request, response: Response) => {
-    response.json({
-      status: 'ok',
-      service: 'fast-order-dispatch',
-      dispatchDriverId: DISPATCH_DRIVER_ID,
-      dispatchDriverIds: service.getDispatchDriverIds(),
-      storage: process.env.DB_PATH ? 'sqlite' : 'memory',
-      queueSize: service.getQueueSize(),
-      uptimeSeconds: Math.round(process.uptime()),
-      timestamp: new Date().toISOString()
-    });
-  });
+  app.get(
+    '/health',
+    asyncHandler(async (_request, response) => {
+      response.json({
+        status: 'ok',
+        service: 'fast-order-dispatch',
+        dispatchDriverId: DISPATCH_DRIVER_ID,
+        dispatchDriverIds: service.getDispatchDriverIds(),
+        storage: service.getStorageKind(),
+        paymentProvider: paymentService.provider,
+        queueSize: await service.getQueueSize(),
+        uptimeSeconds: Math.round(process.uptime()),
+        timestamp: new Date().toISOString()
+      });
+    })
+  );
 
-  app.get('/ready', (_request: Request, response: Response) => {
-    const ready = service.isReady();
-    response.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'unavailable' });
-  });
+  app.get(
+    '/ready',
+    asyncHandler(async (_request, response) => {
+      const ready = await service.isReady();
+      response.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'unavailable' });
+    })
+  );
 
   app.get('/openapi.json', (_request: Request, response: Response) => {
     response.json(openApiSpec);
@@ -387,116 +418,110 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     response.type('html').send(docsHtml);
   });
 
-  app.get('/drivers', (_request: Request, response: Response) => {
-    response.json({ drivers: service.getDrivers() });
-  });
+  app.get(
+    '/drivers',
+    asyncHandler(async (_request, response) => {
+      response.json({ drivers: await service.getDrivers() });
+    })
+  );
 
-  app.post('/drivers', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.post(
+    '/drivers',
+    asyncHandler(async (request, response) => {
       const driver = parseDriver(request.body);
-      service.registerDriver(driver);
-      audit(request, 'driver.registered', 'driver', driver.id, {
+      await service.registerDriver(driver);
+      await audit(request, 'driver.registered', 'driver', driver.id, {
         vehicle: driver.vehicle
       });
       response.status(201).json({
-        driver: service.getDriver(driver.id) ?? driver,
+        driver: (await service.getDriver(driver.id)) ?? driver,
         dispatchDriverId: DISPATCH_DRIVER_ID
       });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.get('/drivers/:id', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.get(
+    '/drivers/:id',
+    asyncHandler(async (request, response) => {
       const driverId = routeParam(request, 'id');
-      const driver = service.getDriver(driverId);
+      const driver = await service.getDriver(driverId);
       if (!driver) throw new NotFoundError(`Driver ${driverId} was not found`);
       response.json({ driver });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.patch('/drivers/:id', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.patch(
+    '/drivers/:id',
+    asyncHandler(async (request, response) => {
       const patch = parseDriverPatch(request.body);
-      const driver = service.updateDriverDetails(routeParam(request, 'id'), patch);
-      audit(request, 'driver.updated', 'driver', driver.id, { fields: Object.keys(patch) });
+      const driver = await service.updateDriverDetails(routeParam(request, 'id'), patch);
+      await audit(request, 'driver.updated', 'driver', driver.id, {
+        fields: Object.keys(patch)
+      });
       response.json({ driver });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  const pendingOrders = (_request: Request, response: Response): void => {
-    response.json({
-      orders: service.getPendingOrders(),
-      queueSize: service.getQueueSize(),
-      dispatchDriverId: DISPATCH_DRIVER_ID
-    });
-  };
+  app.get(
+    '/orders/pending',
+    asyncHandler(async (_request, response) => {
+      response.json({
+        orders: await service.getPendingOrders(),
+        queueSize: await service.getQueueSize(),
+        dispatchDriverId: DISPATCH_DRIVER_ID
+      });
+    })
+  );
 
-  app.get('/orders/pending', pendingOrders);
-
-  app.get('/orders', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.get(
+    '/orders',
+    asyncHandler(async (request, response) => {
       const { limit, offset } = parsePagination(request.query);
       const status = request.query.status === undefined
         ? undefined
         : parseOrderStatus(request.query.status);
-      const orders = service
-        .getOrders()
-        .filter((order) => status === undefined || order.status === status);
-      response.json({
-        orders: orders.slice(offset, offset + limit),
-        total: orders.length,
-        limit,
-        offset
-      });
-    } catch (error) {
-      next(error);
-    }
-  });
+      const { orders, total } = await service.getOrdersPage({ status, limit, offset });
+      response.json({ orders, total, limit, offset });
+    })
+  );
 
-  app.get('/orders/:id', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.get(
+    '/orders/:id',
+    asyncHandler(async (request, response) => {
       const orderId = routeParam(request, 'id');
-      const order = service.getOrder(orderId);
+      const order = await service.getOrder(orderId);
       if (!order) throw new NotFoundError(`Order ${orderId} was not found`);
       response.json({ order });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.get('/orders/:id/payments', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.get(
+    '/orders/:id/payments',
+    asyncHandler(async (request, response) => {
       const orderId = routeParam(request, 'id');
-      if (!service.getOrder(orderId)) {
+      if (!(await service.getOrder(orderId))) {
         throw new NotFoundError(`Order ${orderId} was not found`);
       }
-      response.json({ payments: service.getPayments(orderId) });
-    } catch (error) {
-      next(error);
-    }
-  });
+      response.json({ payments: await service.getPayments(orderId) });
+    })
+  );
 
-  app.post('/orders', async (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.post(
+    '/orders',
+    asyncHandler(async (request, response) => {
       const order = parseOrder(request.body);
       const paymentMethod = isRecord(request.body)
         ? optionalString(request.body.paymentMethod, 'paymentMethod')
         : undefined;
+      await service.addOrder(order, false);
       const transaction = await paymentService.processPayment(order, paymentMethod ?? 'card');
-      order.paymentStatus = transaction.status;
-      service.recordPayment(transaction);
-      service.addOrder(order, transaction.status === PaymentStatus.COMPLETED);
-      audit(request, 'order.created', 'order', order.id, {
+      await service.recordPayment(transaction);
+      await service.updatePaymentStatus(order.id, transaction.status);
+      await audit(request, 'order.created', 'order', order.id, {
         totalAmount: order.totalAmount,
         paymentStatus: transaction.status
       });
-      audit(request, 'payment.charge', 'payment', transaction.id, {
+      await audit(request, 'payment.charge', 'payment', transaction.id, {
         orderId: order.id,
         amount: transaction.amount,
         status: transaction.status,
@@ -506,44 +531,60 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       if (transaction.status !== PaymentStatus.COMPLETED) {
         response.status(402).json({
           error: transaction.notes ?? 'Payment failed',
-          order: service.getOrder(order.id),
+          order: await service.getOrder(order.id),
           transaction
         });
         return;
       }
 
-      const batch = await service.processBatch();
+      await service.enqueueOrder(order.id);
+      const batch = await service.processBatch().catch((error) => {
+        logger.warn('post_create_dispatch_failed', {
+          orderId: order.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        return null;
+      });
       response.status(201).json({
-        order: service.getOrder(order.id),
+        order: await service.getOrder(order.id),
         transaction,
         batch,
         assignedDriverId: batch?.driverId ?? null,
         assignedToTargetDriver: batch
           ? service.getDispatchDriverIds().includes(batch.driverId)
           : false,
-        queueSize: service.getQueueSize()
+        queueSize: await service.getQueueSize()
       });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.post('/orders/:id/pay', async (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.post(
+    '/orders/:id/pay',
+    asyncHandler(async (request, response) => {
       const orderId = routeParam(request, 'id');
-      const order = service.getOrder(orderId);
+      const order = await service.getOrder(orderId);
       if (!order) throw new NotFoundError(`Order ${orderId} was not found`);
-      if (order.paymentStatus === PaymentStatus.COMPLETED) {
+      if (
+        order.paymentStatus === PaymentStatus.COMPLETED ||
+        order.paymentStatus === PaymentStatus.REFUNDED
+      ) {
         throw new ConflictError(`Order ${orderId} is already paid`);
+      }
+      if (
+        order.status === OrderStatus.CANCELLED ||
+        order.status === OrderStatus.FAILED ||
+        order.status === OrderStatus.DELIVERED
+      ) {
+        throw new ConflictError(`Order ${orderId} is ${order.status} and cannot be paid`);
       }
 
       const method = isRecord(request.body)
         ? optionalString(request.body.method, 'method')
         : undefined;
       const transaction = await paymentService.processPayment(order, method ?? 'card');
-      service.recordPayment(transaction);
-      service.updatePaymentStatus(orderId, transaction.status);
-      audit(request, 'payment.charge_retry', 'payment', transaction.id, {
+      await service.recordPayment(transaction);
+      await service.updatePaymentStatus(orderId, transaction.status);
+      await audit(request, 'payment.charge_retry', 'payment', transaction.id, {
         orderId,
         amount: transaction.amount,
         status: transaction.status,
@@ -553,33 +594,39 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       if (transaction.status !== PaymentStatus.COMPLETED) {
         response.status(402).json({
           error: transaction.notes ?? 'Payment failed',
-          order: service.getOrder(orderId),
+          order: await service.getOrder(orderId),
           transaction
         });
         return;
       }
 
-      service.enqueueOrder(orderId);
-      const batch = await service.processBatch();
+      await service.enqueueOrder(orderId);
+      const batch = await service.processBatch().catch((error) => {
+        logger.warn('post_payment_dispatch_failed', {
+          orderId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        return null;
+      });
       response.json({
-        order: service.getOrder(orderId),
+        order: await service.getOrder(orderId),
         transaction,
         batch,
         assignedDriverId: batch?.driverId ?? null,
         assignedToTargetDriver: batch
           ? service.getDispatchDriverIds().includes(batch.driverId)
           : false,
-        queueSize: service.getQueueSize()
+        queueSize: await service.getQueueSize()
       });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.post('/orders/:id/refund', requireRole('admin'), async (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.post(
+    '/orders/:id/refund',
+    requireRole('admin'),
+    asyncHandler(async (request, response) => {
       const orderId = routeParam(request, 'id');
-      const order = service.getOrder(orderId);
+      const order = await service.getOrder(orderId);
       if (!order) throw new NotFoundError(`Order ${orderId} was not found`);
       if (order.paymentStatus !== PaymentStatus.COMPLETED) {
         throw new ConflictError(`Order ${orderId} has no completed payment to refund`);
@@ -588,16 +635,20 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       const method = isRecord(request.body)
         ? optionalString(request.body.method, 'method')
         : undefined;
-      const originalCharge = [...service.getPayments(orderId)]
+      const payments = await service.getPayments(orderId);
+      const originalCharge = [...payments]
         .reverse()
-        .find((payment) => payment.kind !== 'refund' && payment.status === PaymentStatus.COMPLETED);
+        .find(
+          (payment) =>
+            payment.kind !== 'refund' && payment.status === PaymentStatus.COMPLETED
+        );
       const transaction = await paymentService.refund(
         order,
         method ?? 'card',
         originalCharge?.providerTransactionId
       );
-      service.recordPayment(transaction);
-      audit(request, 'payment.refund', 'payment', transaction.id, {
+      await service.recordPayment(transaction);
+      await audit(request, 'payment.refund', 'payment', transaction.id, {
         orderId,
         amount: transaction.amount,
         status: transaction.status,
@@ -607,78 +658,92 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       if (transaction.status !== PaymentStatus.COMPLETED) {
         response.status(402).json({
           error: transaction.notes ?? 'Refund failed',
-          order: service.getOrder(orderId),
+          order: await service.getOrder(orderId),
           transaction
         });
         return;
       }
 
-      service.updatePaymentStatus(orderId, PaymentStatus.REFUNDED);
+      await service.updatePaymentStatus(orderId, PaymentStatus.REFUNDED);
       response.json({
-        order: service.getOrder(orderId),
+        order: await service.getOrder(orderId),
         transaction
       });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.patch('/orders/:id/status', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.patch(
+    '/orders/:id/status',
+    asyncHandler(async (request, response) => {
       const status = isRecord(request.body)
         ? parseOrderStatus(request.body.status)
         : parseOrderStatus(undefined);
-      const order = service.updateOrderStatus(routeParam(request, 'id'), status);
-      audit(request, 'order.status_changed', 'order', order.id, { status });
+      const order = await service.updateOrderStatus(routeParam(request, 'id'), status);
+      await audit(request, 'order.status_changed', 'order', order.id, { status });
       response.json({ order });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.get('/batches', (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.get(
+    '/batches',
+    asyncHandler(async (request, response) => {
       const { limit, offset } = parsePagination(request.query);
-      const batches = service.getBatches();
+      const batches = await service.getBatches();
       response.json({
         batches: batches.slice(offset, offset + limit),
         total: batches.length,
         limit,
         offset
       });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.get('/metrics', (_request: Request, response: Response) => {
-    response.json(service.getMetrics());
-  });
+  app.get(
+    '/metrics',
+    asyncHandler(async (_request, response) => {
+      response.json(await service.getMetrics());
+    })
+  );
 
-  app.get('/audit', requireRole('admin'), (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.get(
+    '/metrics/prometheus',
+    asyncHandler(async (_request, response) => {
+      const usage = process.memoryUsage();
+      response
+        .type('text/plain; version=0.0.4; charset=utf-8')
+        .send(
+          renderPrometheusMetrics(await service.getMetrics(), {
+            uptimeSeconds: Math.round(process.uptime()),
+            memoryRssBytes: usage.rss,
+            memoryHeapUsedBytes: usage.heapUsed
+          })
+        );
+    })
+  );
+
+  app.get(
+    '/audit',
+    requireRole('admin'),
+    asyncHandler(async (request, response) => {
       const { limit, offset } = parsePagination(request.query);
-      const { entries, total } = service.getAuditLog(limit, offset);
+      const { entries, total } = await service.getAuditLog(limit, offset);
       response.json({ entries, total, limit, offset });
-    } catch (error) {
-      next(error);
-    }
-  });
+    })
+  );
 
-  app.post('/dispatch/process', async (request: Request, response: Response, next: NextFunction) => {
-    try {
+  app.post(
+    '/dispatch/process',
+    asyncHandler(async (request, response) => {
       const batch = await service.processBatch();
       if (batch) {
-        audit(request, 'dispatch.processed', 'batch', batch.id, {
+        await audit(request, 'dispatch.processed', 'batch', batch.id, {
           orderIds: batch.orderIds,
           driverId: batch.driverId
         });
       }
-      response.json({ batch, queueSize: service.getQueueSize() });
-    } catch (error) {
-      next(error);
-    }
-  });
+      response.json({ batch, queueSize: await service.getQueueSize() });
+    })
+  );
 
   app.use((error: unknown, request: RequestWithId, response: Response, _next: NextFunction) => {
     if (error instanceof HttpError) {
@@ -697,7 +762,10 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
           path: request.originalUrl
         });
       }
-      response.status(error.statusCode).json({ error: error.message });
+      response.status(error.statusCode).json({
+        error:
+          error.statusCode >= 500 ? 'Internal server error' : error.message
+      });
       return;
     }
 
@@ -716,7 +784,7 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       error: message,
       path: request.originalUrl
     });
-    response.status(500).json({ error: message });
+    response.status(500).json({ error: 'Internal server error' });
   });
 
   return app;
@@ -809,12 +877,12 @@ function extractWebhookUpdate(
   return { providerTransactionId, status };
 }
 
-function handlePaymentWebhook(
+async function handlePaymentWebhook(
   request: Request,
   response: Response,
   service: BatchProcessingService,
   options: PaymentWebhookOptions | undefined
-): void {
+): Promise<void> {
   const provider = options?.provider ?? 'mock';
   if (provider === 'mock' || !options?.secret) {
     response.status(provider === 'mock' ? 404 : 503).json({
@@ -857,7 +925,7 @@ function handlePaymentWebhook(
     return;
   }
 
-  const payment = service.findPaymentByProviderTransactionId(update.providerTransactionId);
+  const payment = await service.findPaymentByProviderTransactionId(update.providerTransactionId);
   if (!payment) {
     response.json({ received: true, matched: false });
     return;
@@ -868,13 +936,21 @@ function handlePaymentWebhook(
     status: update.status,
     processedAt: new Date()
   };
-  service.recordPayment(updated);
+  await service.recordPayment(updated);
   if (updated.kind !== 'refund') {
-    service.updatePaymentStatus(updated.orderId, update.status);
+    await service.updatePaymentStatus(updated.orderId, update.status);
+    if (update.status === PaymentStatus.COMPLETED) {
+      const order = await service.getOrder(updated.orderId);
+      if (order?.status === OrderStatus.PENDING && !order.queuedAt) {
+        await service.enqueueOrder(order.id).catch((error) => {
+          if (!(error instanceof ConflictError)) throw error;
+        });
+      }
+    }
   } else if (update.status === PaymentStatus.REFUNDED) {
-    service.updatePaymentStatus(updated.orderId, PaymentStatus.REFUNDED);
+    await service.updatePaymentStatus(updated.orderId, PaymentStatus.REFUNDED);
   }
-  service.recordAudit({
+  await service.recordAudit({
     actor: 'payment-provider',
     role: 'provider',
     ip: request.ip,
@@ -890,9 +966,7 @@ function handlePaymentWebhook(
   response.json({ received: true, matched: true });
 }
 
-const store: Store = process.env.DB_PATH
-  ? new SqliteStore(process.env.DB_PATH)
-  : new InMemoryStore();
+const store = createDispatchStore(config);
 export const dispatchService = new BatchProcessingService(3, store, {
   dispatchDriverIds: config.dispatchDriverIds
 });
@@ -901,6 +975,7 @@ export const app = createDispatchApp({
   service: dispatchService,
   paymentService,
   apiKeys: config.apiKeys.length > 0 ? config.apiKeys : config.apiKey,
+  corsOrigins: config.corsOrigins,
   rateLimit: { windowMs: config.rateLimitWindowMs, max: config.rateLimitMax },
   redisUrl: config.redisUrl,
   trustProxy: config.trustProxy,
@@ -920,7 +995,9 @@ export interface StartServerOptions {
   host?: string;
 }
 
-export function startServer(options: StartServerOptions = {}) {
+export async function startServer(
+  options: StartServerOptions = {}
+): Promise<{ server: ReturnType<typeof createServer>; io: Awaited<ReturnType<typeof attachRealtime>> }> {
   const port = options.port ?? Number(process.env.PORT ?? 3000);
   const host = options.host ?? process.env.HOST ?? '0.0.0.0';
 
@@ -928,10 +1005,13 @@ export function startServer(options: StartServerOptions = {}) {
     throw new ValidationError('PORT must be an integer between 0 and 65535');
   }
 
+  await dispatchService.initialize();
+
   const server = createServer(app);
-  const io = attachRealtime(server, dispatchService, {
+  const io = await attachRealtime(server, dispatchService, {
     apiKeys: config.apiKeys.length > 0 ? config.apiKeys : config.apiKey,
-    redisUrl: config.redisUrl
+    redisUrl: config.redisUrl,
+    corsOrigins: config.corsOrigins
   });
 
   const interval = Number(process.env.AUTO_PROCESS_INTERVAL_MS ?? 0);
@@ -945,9 +1025,17 @@ export function startServer(options: StartServerOptions = {}) {
     logger.info('server_listening', {
       host,
       port: boundPort,
-      storage: process.env.DB_PATH ? 'sqlite' : 'memory',
+      nodeEnv: config.nodeEnv,
+      storage: dispatchService.getStorageKind(),
+      cors:
+        config.corsOrigins.length === 1 && config.corsOrigins[0] === '*'
+          ? '*'
+          : `${config.corsOrigins.length} origin(s)`,
       auth: config.apiKeys.length > 0 ? `${config.apiKeys.length} api key(s)` : 'disabled',
-      rateLimit: config.rateLimitMax > 0 ? `${config.rateLimitMax}/${config.rateLimitWindowMs}ms` : 'disabled',
+      rateLimit:
+        config.rateLimitMax > 0
+          ? `${config.rateLimitMax}/${config.rateLimitWindowMs}ms`
+          : 'disabled',
       rateLimitBackend: config.redisUrl ? 'redis' : 'memory',
       paymentProvider: config.paymentProvider,
       redis: Boolean(config.redisUrl)
@@ -959,17 +1047,29 @@ export function startServer(options: StartServerOptions = {}) {
 }
 
 if (require.main === module) {
-  const { io } = startServer();
-  const shutdown = (): void => {
-    logger.info('shutting_down');
-    dispatchService.stopAutoProcessing();
-    const limiter = app.locals.rateLimiter as RateLimiterHandle | undefined;
-    io.close(async () => {
-      await limiter?.close();
-      store.close();
-      process.exit(0);
+  void startServer()
+    .then(({ io }) => {
+      const shutdown = (): void => {
+        logger.info('shutting_down');
+        dispatchService.stopAutoProcessing();
+        const limiter = app.locals.rateLimiter as RateLimiterHandle | undefined;
+        io.close(async () => {
+          if (limiter) await limiter.close().catch(() => undefined);
+          await dispatchService.close().catch((error) => {
+            logger.error('shutdown_failed', {
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+          process.exit(0);
+        });
+      };
+      process.once('SIGINT', shutdown);
+      process.once('SIGTERM', shutdown);
+    })
+    .catch((error) => {
+      logger.error('startup_failed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      process.exit(1);
     });
-  };
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
 }

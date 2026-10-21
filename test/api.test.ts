@@ -48,6 +48,89 @@ test('GET /health reports service state', async () => {
   expect(body.storage).toBe('memory');
 });
 
+test('serves the web console', async () => {
+  const response = await fetch(`${baseUrl}/`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-type')).toContain('text/html');
+  expect(await response.text()).toContain('fast-order-dispatch');
+});
+
+test('serves all console pages and assets', async () => {
+  for (const asset of [
+    '/customer.html',
+    '/driver.html',
+    '/admin.html',
+    '/styles.css',
+    '/common.js',
+    '/customer.js',
+    '/driver.js',
+    '/admin.js'
+  ]) {
+    const response = await fetch(`${baseUrl}${asset}`);
+    expect(response.status).toBe(200);
+  }
+});
+
+test('serves PWA manifest, service worker, and icons', async () => {
+  const manifest = await fetch(`${baseUrl}/manifest.webmanifest`);
+  expect(manifest.status).toBe(200);
+  expect(manifest.headers.get('content-type')).toContain('manifest');
+  const manifestBody = JSON.parse(await manifest.text());
+  expect(manifestBody.name).toBe('fast-order-dispatch');
+  expect(manifestBody.icons.length).toBeGreaterThanOrEqual(2);
+
+  const sw = await fetch(`${baseUrl}/sw.js`);
+  expect(sw.status).toBe(200);
+  expect(sw.headers.get('content-type')).toContain('javascript');
+  expect(await sw.text()).toContain('fod-v1');
+
+  for (const icon of [
+    '/favicon.svg',
+    '/favicon-32.png',
+    '/apple-touch-icon.png',
+    '/icon-192.png',
+    '/icon-512.png',
+    '/icon-maskable-512.png'
+  ]) {
+    const response = await fetch(`${baseUrl}${icon}`);
+    expect(response.status).toBe(200);
+  }
+
+  const home = await fetch(`${baseUrl}/`);
+  const html = await home.text();
+  expect(html).toContain('/manifest.webmanifest');
+  expect(html).toContain('theme-color');
+
+  const common = await fetch(`${baseUrl}/common.js`);
+  expect(await common.text()).toContain('serviceWorker');
+});
+
+test('serves self-hosted Swagger UI assets', async () => {
+  const docs = await fetch(`${baseUrl}/docs`);
+  expect(docs.status).toBe(200);
+  const html = await docs.text();
+  expect(html).toContain('/swagger-ui/swagger-ui.css');
+  expect(html).not.toContain('unpkg.com');
+
+  const css = await fetch(`${baseUrl}/swagger-ui/swagger-ui.css`);
+  expect(css.status).toBe(200);
+  expect(css.headers.get('content-type')).toContain('text/css');
+
+  const bundle = await fetch(`${baseUrl}/swagger-ui/swagger-ui-bundle.js`);
+  expect(bundle.status).toBe(200);
+  expect(bundle.headers.get('content-type')).toContain('javascript');
+});
+
+test('exposes Prometheus metrics', async () => {
+  const response = await fetch(`${baseUrl}/metrics/prometheus`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-type')).toContain('text/plain');
+  const body = await response.text();
+  expect(body).toContain('# TYPE dispatch_orders_processed_total counter');
+  expect(body).toContain('dispatch_orders_pending');
+  expect(body).toContain('process_uptime_seconds');
+});
+
 test('registers the target driver once', async () => {
   const registration = await post('/drivers', makeDriver());
   expect(registration.status).toBe(201);

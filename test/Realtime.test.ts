@@ -23,7 +23,7 @@ function waitForEvent<T>(socket: Socket, event: string, timeoutMs = 5000): Promi
 
 describe('realtime events', () => {
   let server: HttpServer;
-  let ioServer: ReturnType<typeof attachRealtime>;
+  let ioServer: Awaited<ReturnType<typeof attachRealtime>>;
   let client: Socket;
   let baseUrl: string;
   let service: BatchProcessingService;
@@ -32,7 +32,7 @@ describe('realtime events', () => {
     service = new BatchProcessingService();
     const app = createDispatchApp({ service });
     server = createServer(app);
-    ioServer = attachRealtime(server, service, { redisUrl: null });
+    ioServer = await attachRealtime(server, service, { redisUrl: null });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;

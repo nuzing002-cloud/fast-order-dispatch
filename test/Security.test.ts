@@ -99,7 +99,7 @@ test('authenticates Socket.IO connections', async () => {
   const service = new BatchProcessingService();
   const app = createDispatchApp({ service, apiKey: 'socket-key' });
   const server = createServer(app);
-  const ioServer = attachRealtime(server, service, { apiKey: 'socket-key', redisUrl: null });
+  const ioServer = await attachRealtime(server, service, { apiKey: 'socket-key', redisUrl: null });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
@@ -122,4 +122,21 @@ test('authenticates Socket.IO connections', async () => {
   accepted.close();
 
   await new Promise<void>((resolve) => ioServer.close(() => resolve()));
+});
+
+test('enforces configured CORS origins', async () => {
+  const { server, baseUrl } = await start({ corsOrigins: ['https://app.example.com'] });
+  try {
+    const allowed = await fetch(`${baseUrl}/health`, {
+      headers: { Origin: 'https://app.example.com' }
+    });
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://app.example.com');
+
+    const blocked = await fetch(`${baseUrl}/health`, {
+      headers: { Origin: 'https://evil.example.com' }
+    });
+    expect(blocked.headers.get('access-control-allow-origin')).toBeNull();
+  } finally {
+    await stop(server);
+  }
 });

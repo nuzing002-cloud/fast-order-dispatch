@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>คนขับ | fast-order-dispatch</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">F</span>
+        <span>fast-order-dispatch</span>
+      </a>
+      <nav class="nav">
+        <a href="/">หน้าแรก</a>
+        <a href="/customer.html">สั่งอาหาร</a>
+        <a href="/driver.html" class="active">คนขับ</a>
+        <a href="/admin.html">แอดมิน</a>
+        <a href="/docs">API Docs</a>
+      </nav>
+      <div class="keybar">
+        <input data-api-key type="password" placeholder="API key (ถ้ามี)" autocomplete="off" />
+        <button data-save-key class="btn-small">บันทึก</button>
+      </div>
+      <span data-key-state class="badge status-PENDING">ยังไม่ได้ใส่ API key</span>
+    </header>
+
+    <main class="container">
+      <div class="page-head">
+        <div>
+          <h1>คอนโซลคนขับ</h1>
+          <p>อัปเดตสถานะและตำแหน่ง รับงาน และเปลี่ยนสถานะจัดส่ง</p>
+        </div>
+        <span id="liveBadge" class="badge status-PENDING">realtime: รอเชื่อมต่อ</span>
+      </div>
+
+      <div class="split">
+        <section class="grid">
+          <article class="card">
+            <h2>เลือกคนขับ</h2>
+            <div class="row">
+              <input id="driverIdInput" class="mono" placeholder="1388246780" style="flex: 1" />
+              <button id="loadDriver" class="btn-primary btn-small">โหลดข้อมูล</button>
+            </div>
+            <p class="muted small" style="margin-bottom: 0">
+              ถ้ายังไม่มีคนขับ ให้สร้างที่หน้า <a href="/admin.html">แอดมิน</a> ก่อน
+            </p>
+          </article>
+
+          <article class="card" id="driverCard">
+            <p class="muted small">ยังไม่ได้เลือกคนขับ</p>
+          </article>
+
+          <article class="card">
+            <h2>ตำแหน่งปัจจุบัน</h2>
+            <div class="form-grid">
+              <label>ละติจูด<input id="latInput" type="number" step="any" placeholder="13.7563" /></label>
+              <label>ลองจิจูด<input id="lngInput" type="number" step="any" placeholder="100.5018" /></label>
+            </div>
+            <div class="row" style="margin-top: 12px">
+              <button id="locateButton" class="btn-small">ใช้ตำแหน่งปัจจุบัน</button>
+              <button id="saveLocation" class="btn-primary btn-small">บันทึกตำแหน่ง</button>
+            </div>
+          </article>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <h2>งานที่ได้รับมอบหมาย</h2>
+            <button id="refreshJobs" class="btn-small">รีเฟรช</button>
+          </div>
+          <div id="jobs">
+            <p class="muted small">โหลดข้อมูลคนขับเพื่อดูงาน</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/common.js"></script>
+    <script src="/driver.js"></script>
+  </body>
+</html>

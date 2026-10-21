@@ -1,0 +1,160 @@
+const puppeteer = require('puppeteer-core');
+const fs = require('fs');
+const path = require('path');
+
+const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:3000';
+const CHROME = process.env.CHROME_PATH || `${process.env.PREFIX}/bin/chromium-browser`;
+const OUT = process.env.E2E_OUT_DIR || path.join(process.env.TMPDIR || '/tmp', 'fod-e2e');
+const DRIVER = '1388246780';
+
+fs.mkdirSync(OUT, { recursive: true });
+
+function fail(message) {
+  throw new Error(message);
+}
+
+async function shot(page, name) {
+  await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: true });
+  console.log(`  shot: ${name}.png`);
+}
+
+function watch(page, errors) {
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(`console: ${msg.text()}`);
+  });
+  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
+  page.on('requestfailed', (req) => errors.push(`requestfailed: ${req.url()} ${req.failure()?.errorText || ''}`));
+}
+
+async function open(page, errors, url) {
+  errors.length = 0;
+  await page.goto(`${BASE}${url}`, { waitUntil: 'networkidle2', timeout: 30000 });
+}
+
+async function text(page, selector) {
+  return page.$eval(selector, (el) => el.textContent.trim()).catch(() => null);
+}
+
+async function run() {
+  const browser = await puppeteer.launch({
+    executablePath: CHROME,
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--disable-dbus', '--window-size=420,900']
+  });
+  const page = await browser.newPage();
+  await page.setViewport({ width: 420, height: 900, isMobile: true, hasTouch: true });
+  const errors = [];
+  const results = {};
+
+  try {
+    // --- Home ---
+    await open(page, errors, '/');
+    await page.waitForFunction(() => document.getElementById('checkedAt')?.textContent !== '-', { timeout: 10000 });
+    results.home = {
+      health: await text(page, '#healthBadge'),
+      checked: await text(page, '#checkedAt'),
+      errors: [...errors]
+    };
+    if (!results.home.health.includes('ระบบทำงานปกติ')) fail(`home health: ${results.home.health}`);
+    await shot(page, '01-home');
+
+    // --- PWA assets ---
+    results.pwa = await page.evaluate(async () => {
+      const sw = await navigator.serviceWorker.getRegistration('/sw.js');
+      const manifest = document.querySelector('link[rel="manifest"]');
+      return {
+        swScope: sw ? sw.scope : null,
+        manifestHref: manifest ? manifest.href : null,
+        themeColor: document.querySelector('meta[name="theme-color"]')?.content
+      };
+    });
+    if (!results.pwa.manifestHref) fail('manifest link missing');
+    if (!results.pwa.themeColor) fail('theme-color missing');
+
+    // --- Customer: create order (defaults, mock pay, auto dispatch) ---
+    await open(page, errors, '/customer.html');
+    await page.waitForSelector('#submitOrder');
+    await page.click('#submitOrder');
+    await page.waitForFunction(() => document.querySelector('#tracking .order-card, #tracking .card, #tracking [data-cancel]'), { timeout: 20000 });
+    const orderBody = await text(page, '#tracking');
+    const orderId = orderBody.match(/order_[a-z0-9]+/i)?.[0];
+    if (!orderId) fail(`no order id in tracking: ${orderBody?.slice(0, 200)}`);
+    results.customer = { orderId, errors: [...errors] };
+    await shot(page, '02-customer-order');
+
+    // --- Driver: load, verify job, advance to DELIVERED ---
+    await open(page, errors, '/driver.html');
+    await page.waitForSelector('#loadDriver');
+    await page.waitForFunction(() => document.getElementById('driverCard')?.textContent.includes('Target Driver'), { timeout: 15000 });
+    await page.click('#loadDriver');
+    await page.waitForFunction(() => document.getElementById('driverCard')?.textContent.includes('Target Driver'), { timeout: 15000 });
+    try {
+      await page.waitForFunction(() => document.getElementById('jobs')?.textContent.includes('order_'), { timeout: 20000 });
+    } catch (driverErr) {
+      const dbg = await page.evaluate(() => ({
+        driverCard: document.getElementById('driverCard')?.textContent.trim(),
+        jobs: document.getElementById('jobs')?.textContent.trim(),
+        idValue: document.getElementById('driverIdInput')?.value
+      }));
+      await shot(page, '03-driver-timeout');
+      console.error('driver jobs not found; debug:', JSON.stringify(dbg));
+      fail(`driver jobs timeout: ${JSON.stringify(dbg)}`);
+    }
+
+    const advance = async (label, status) => {
+      await page.evaluate((needle) => {
+        const list = [...document.querySelectorAll('[data-next]')];
+        const target = list.find((button) => button.textContent.includes(needle)) || list[0];
+        if (!target) throw new Error(`no [data-next] for ${needle}`);
+        target.click();
+      }, label);
+      await page.waitForFunction(
+        (next) =>
+          Boolean(document.querySelector(`#jobs .badge.status-${next}`)) ||
+          document.getElementById('driverCard')?.textContent.includes('พร้อมรับงาน'),
+        { timeout: 15000 },
+        status
+      );
+      await shot(page, `03-driver-${status.toLowerCase()}`);
+    };
+
+    await advance('รับอาหารแล้ว', 'PICKED_UP');
+    await advance('เริ่มจัดส่ง', 'IN_DELIVERY');
+    await advance('ส่งสำเร็จ', 'DELIVERED');
+
+    // job should clear or show DELIVERED; driver back to AVAILABLE
+    await page.waitForFunction(() => document.getElementById('driverCard')?.textContent.includes('พร้อมรับงาน') || !document.getElementById('jobs')?.textContent.includes('กำลังส่ง'), { timeout: 15000 });
+    results.driver = { advanced: 'DELIVERED', errors: [...errors] };
+
+    // --- Admin: order visible with delivery stats ---
+    await open(page, errors, '/admin.html');
+    await page.waitForFunction(() => document.getElementById('ordersTable')?.textContent.includes('order_') || document.body.textContent.includes('DELIVERED') || document.body.textContent.includes('ส่งสำเร็จ'), { timeout: 20000 });
+    results.admin = { sawDelivered: true, errors: [...errors] };
+    await shot(page, '04-admin');
+
+    const allErrors = [...results.home.errors, ...results.customer.errors, ...results.driver.errors, ...results.admin.errors];
+    const summary = {
+      ok: allErrors.length === 0,
+      baseUrl: BASE,
+      orderId: results.customer.orderId,
+      pwa: results.pwa,
+      consoleErrors: allErrors,
+      shotsDir: OUT
+    };
+    fs.writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify(summary, null, 2));
+    console.log(JSON.stringify(summary, null, 2));
+    if (allErrors.length) {
+      console.error('FAIL: browser errors');
+      process.exitCode = 1;
+    } else {
+      console.log('E2E PASS');
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+run().catch((err) => {
+  console.error('E2E FAILED:', err.message);
+  process.exit(1);
+});

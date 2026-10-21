@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>แอดมิน | fast-order-dispatch</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">F</span>
+        <span>fast-order-dispatch</span>
+      </a>
+      <nav class="nav">
+        <a href="/">หน้าแรก</a>
+        <a href="/customer.html">สั่งอาหาร</a>
+        <a href="/driver.html">คนขับ</a>
+        <a href="/admin.html" class="active">แอดมิน</a>
+        <a href="/docs">API Docs</a>
+      </nav>
+      <div class="keybar">
+        <input data-api-key type="password" placeholder="API key (ถ้ามี)" autocomplete="off" />
+        <button data-save-key class="btn-small">บันทึก</button>
+      </div>
+      <span data-key-state class="badge status-PENDING">ยังไม่ได้ใส่ API key</span>
+    </header>
+
+    <main class="container">
+      <div class="page-head">
+        <div>
+          <h1>แดชบอร์ด</h1>
+          <p>ภาพรวมระบบ จัดการคนขับ สั่ง dispatch และตรวจสอบ audit log</p>
+        </div>
+        <div class="row">
+          <button id="refreshButton" class="btn-small">รีเฟรช</button>
+          <button id="dispatchButton" class="btn-primary btn-small">รัน dispatch</button>
+        </div>
+      </div>
+
+      <section class="grid grid-4" id="metrics"></section>
+
+      <section class="card section" style="margin-top: 16px">
+        <div class="row" style="justify-content: space-between">
+          <div>
+            <h2 style="margin: 0">สถานะระบบ</h2>
+            <p class="muted small" id="dispatchInfo" style="margin: 4px 0 0">กำลังโหลด...</p>
+          </div>
+          <button id="seedButton" class="btn-small">สร้างข้อมูลตัวอย่าง</button>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>ออเดอร์ล่าสุด</h2>
+          <span class="muted small">สูงสุด 50 รายการ</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>สถานะ</th>
+                <th>ชำระเงิน</th>
+                <th>ยอดรวม</th>
+                <th>คนขับ</th>
+                <th>สร้างเมื่อ</th>
+                <th>จัดการ</th>
+              </tr>
+            </thead>
+            <tbody id="ordersBody">
+              <tr><td colspan="7" class="empty">กำลังโหลด...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="split section">
+        <section>
+          <div class="section-head">
+            <h2>คนขับ</h2>
+            <span class="muted small" id="driverCount">-</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>ชื่อ</th>
+                  <th>สถานะ</th>
+                  <th>งาน / ความจุ</th>
+                  <th>ตำแหน่ง</th>
+                  <th>อัปเดต</th>
+                </tr>
+              </thead>
+              <tbody id="driversBody">
+                <tr><td colspan="6" class="empty">กำลังโหลด...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>เพิ่มคนขับ</h2>
+          <form id="driverForm" class="form-grid">
+            <label>ID<input id="newDriverId" value="1388246780" required /></label>
+            <label>ชื่อ<input id="newDriverName" value="Target Driver" required /></label>
+            <label>โทรศัพท์<input id="newDriverPhone" value="0000000000" required /></label>
+            <label>รถ<input id="newDriverVehicle" value="motorcycle" required /></label>
+            <label>ทะเบียน<input id="newDriverPlate" value="TARGET" required /></label>
+            <label>ความจุ<input id="newDriverCapacity" type="number" min="1" value="3" required /></label>
+            <label>ละติจูด<input id="newDriverLat" type="number" step="any" value="13.7563" required /></label>
+            <label>ลองจิจูด<input id="newDriverLng" type="number" step="any" value="100.5018" required /></label>
+            <button type="submit" class="btn-primary wide">ลงทะเบียนคนขับ</button>
+          </form>
+        </section>
+      </div>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Batch ล่าสุด</h2>
+          <span class="muted small" id="batchCount">-</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Batch</th>
+                <th>คนขับ</th>
+                <th>จำนวนออเดอร์</th>
+                <th>ระยะทาง</th>
+                <th>ETA</th>
+                <th>สร้างเมื่อ</th>
+                <th>เสร็จเมื่อ</th>
+              </tr>
+            </thead>
+            <tbody id="batchesBody">
+              <tr><td colspan="7" class="empty">กำลังโหลด...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section card">
+        <div class="section-head">
+          <h2>Audit log</h2>
+          <span class="muted small">ต้องใช้ key role admin</span>
+        </div>
+        <div id="auditList"><p class="muted small">กำลังโหลด...</p></div>
+      </section>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/common.js"></script>
+    <script src="/admin.js"></script>
+  </body>
+</html>

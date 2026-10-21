@@ -33,8 +33,8 @@ describeRedis('redis adapter', () => {
 
     const serverA: HttpServer = createServer(createDispatchApp({ service: serviceA }));
     const serverB: HttpServer = createServer(createDispatchApp({ service: serviceB }));
-    const ioA = attachRealtime(serverA, serviceA, { redisUrl: null });
-    const ioB = attachRealtime(serverB, serviceB, { redisUrl: null });
+    const ioA = await attachRealtime(serverA, serviceA, { redisUrl: null });
+    const ioB = await attachRealtime(serverB, serviceB, { redisUrl: null });
 
     await Promise.all([
       new Promise<void>((resolve) => serverA.listen(0, '127.0.0.1', resolve)),

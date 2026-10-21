@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>fast-order-dispatch</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">F</span>
+        <span>fast-order-dispatch</span>
+      </a>
+      <nav class="nav">
+        <a href="/" class="active">หน้าแรก</a>
+        <a href="/customer.html">สั่งอาหาร</a>
+        <a href="/driver.html">คนขับ</a>
+        <a href="/admin.html">แอดมิน</a>
+        <a href="/docs">API Docs</a>
+      </nav>
+      <div class="keybar">
+        <input data-api-key type="password" placeholder="API key (ถ้ามี)" autocomplete="off" />
+        <button data-save-key class="btn-small">บันทึก</button>
+      </div>
+      <span data-key-state class="badge status-PENDING">ยังไม่ได้ใส่ API key</span>
+    </header>
+
+    <main class="container">
+      <section class="hero">
+        <div class="row">
+          <span id="healthBadge" class="badge status-PENDING">กำลังตรวจสอบสถานะ...</span>
+          <span class="muted small">อัปเดตล่าสุด: <span id="checkedAt">-</span></span>
+        </div>
+        <h1>ระบบจ่ายงานจัดส่ง พร้อมใช้งานในที่เดียว</h1>
+        <p>
+          รวมออเดอร์เป็นชุด เลือกคนขับอัตโนมัติ คิด ETA ติดตามสถานะแบบเรียลไทม์
+          พร้อมระบบชำระเงินและบันทึกธุรกรรมครบถ้วน
+        </p>
+        <div class="hero-actions">
+          <a class="btn-primary" href="/customer.html" style="padding: 10px 16px; border-radius: 10px; font-weight: 700">
+            เริ่มสร้างออเดอร์
+          </a>
+          <a href="/admin.html" style="padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line)">
+            เปิดแดชบอร์ด
+          </a>
+        </div>
+        <dl class="kv" id="healthDetails" style="margin-top: 10px">
+          <dt>Storage</dt>
+          <dd id="storageValue">-</dd>
+          <dt>คิวงาน</dt>
+          <dd id="queueValue">-</dd>
+          <dt>Driver ที่รับงาน</dt>
+          <dd id="driversValue">-</dd>
+          <dt>Uptime</dt>
+          <dd id="uptimeValue">-</dd>
+        </dl>
+      </section>
+
+      <section class="hero-cards">
+        <a href="/customer.html">
+          <strong>ลูกค้า / ร้านค้า</strong>
+          <span>สร้างออเดอร์ใหม่และติดตามสถานะแบบเรียลไทม์</span>
+        </a>
+        <a href="/driver.html">
+          <strong>คนขับ</strong>
+          <span>อัปเดตตำแหน่ง รับงาน และเปลี่ยนสถานะจัดส่ง</span>
+        </a>
+        <a href="/admin.html">
+          <strong>แอดมิน</strong>
+          <span>ดู metrics จัดการคนขับ สั่ง dispatch และดู audit</span>
+        </a>
+        <a href="/docs">
+          <strong>API Docs</strong>
+          <span>Swagger UI และ OpenAPI สำหรับเชื่อมต่อระบบอื่น</span>
+        </a>
+      </section>
+
+      <section class="section grid grid-3">
+        <article class="card">
+          <h3>Batch อัจฉริยะ</h3>
+          <p class="muted small">รวมสูงสุด 3 ออเดอร์ต่อคนขับ เลือกเส้นทางใกล้ที่สุด และคำนวณ ETA จากเวลาเตรียมอาหาร</p>
+        </article>
+        <article class="card">
+          <h3>ติดตามเรียลไทม์</h3>
+          <p class="muted small">Socket.IO แจ้ง event เมื่อมีออเดอร์ใหม่ มอบหมายงาน หรือสถานะเปลี่ยน</p>
+        </article>
+        <article class="card">
+          <h3>พร้อมขยายระบบ</h3>
+          <p class="muted small">PostgreSQL + Redis รองรับหลาย instance และมี metrics สำหรับ monitoring</p>
+        </article>
+      </section>
+
+      <p class="muted small" style="margin-top: 22px">
+        หมายเหตุ: หน้านี้เป็นเครื่องมือสำหรับใช้งานภายใน/ทดสอบ หากเปิด API key ไว้ ให้กรอก key ที่แถบด้านบนก่อนใช้งาน
+      </p>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/common.js"></script>
+    <script>
+      FOD.bindKeyBar();
+
+      async function loadHealth() {
+        const badge = document.getElementById('healthBadge');
+        try {
+          const health = await FOD.request('/health');
+          badge.className = 'badge status-AVAILABLE';
+          badge.textContent = 'ระบบทำงานปกติ';
+          document.getElementById('storageValue').textContent = health.storage || '-';
+          document.getElementById('queueValue').textContent = `${health.queueSize ?? 0} ออเดอร์`;
+          document.getElementById('driversValue').textContent = (health.dispatchDriverIds || []).join(', ') || '-';
+          document.getElementById('uptimeValue').textContent = `${health.uptimeSeconds ?? 0} วินาที`;
+          document.getElementById('checkedAt').textContent = new Date().toLocaleTimeString('th-TH');
+        } catch (error) {
+          badge.className = 'badge status-FAILED';
+          badge.textContent = 'เชื่อมต่อไม่ได้';
+          FOD.toast(error.message, 'error');
+        }
+      }
+
+      loadHealth();
+      setInterval(loadHealth, 15000);
+    </script>
+  </body>
+</html>

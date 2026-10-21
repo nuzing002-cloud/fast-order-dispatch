@@ -4,19 +4,21 @@ import { AddressInfo } from 'net';
 import { createDispatchApp } from '../src/index';
 import { verifyStripeSignature } from '../src/services/PaymentGateways';
 import { BatchProcessingService } from '../src/services/BatchProcessingService';
-import { InMemoryStore } from '../src/store/Store';
+import { MemoryDispatchStore } from '../src/store/DispatchStore';
+import { PaymentStatus } from '../src/types/order';
 import { makeDriver, makeOrder } from './helpers';
 
 let server: Server;
 let baseUrl: string;
-let store: InMemoryStore;
+let store: MemoryDispatchStore;
+let service: BatchProcessingService;
 
 const adminKey = 'admin-key';
 const viewerKey = 'viewer-key';
 
 beforeAll(async () => {
-  store = new InMemoryStore();
-  const service = new BatchProcessingService(3, store);
+  store = new MemoryDispatchStore();
+  service = new BatchProcessingService(3, store);
   const app = createDispatchApp({
     service,
     apiKeys: [
@@ -85,6 +87,38 @@ test('replays idempotent order creation and rejects key reuse', async () => {
   expect(reused.status).toBe(409);
 });
 
+test('does not persist server errors for idempotency keys', async () => {
+  const order = makeOrder('idem-500');
+  const original = service.addOrder;
+  let fail = true;
+  service.addOrder = async (...args) => {
+    if (fail) {
+      fail = false;
+      throw new Error('simulated database failure');
+    }
+    return original.apply(service, args);
+  };
+
+  try {
+    const headers = { 'Idempotency-Key': 'order-500-1' };
+    const first = await call('/orders', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(order)
+    });
+    expect(first.status).toBe(500);
+
+    const second = await call('/orders', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(order)
+    });
+    expect(second.status).toBe(201);
+  } finally {
+    service.addOrder = original;
+  }
+});
+
 test('enforces roles and per-key quotas', async () => {
   const viewerRead = await call('/drivers', {}, viewerKey);
   expect(viewerRead.status).toBe(200);
@@ -138,6 +172,43 @@ test('verifies payment webhook signatures', async () => {
     body: payload
   });
   expect(rejected.status).toBe(400);
+});
+
+test('enqueues an order when a webhook confirms a late payment', async () => {
+  const order = makeOrder('webhook-late');
+  await service.addOrder(order, false);
+  await service.recordPayment({
+    id: 'tx_late',
+    orderId: order.id,
+    amount: order.totalAmount,
+    method: 'card',
+    kind: 'charge',
+    status: PaymentStatus.FAILED,
+    providerTransactionId: 'late-provider-1',
+    createdAt: new Date(),
+    processedAt: new Date()
+  });
+
+  const payload = JSON.stringify({
+    transactionId: 'late-provider-1',
+    status: 'succeeded'
+  });
+  const signature = createHmac('sha256', 'webhook-secret').update(payload).digest('hex');
+  const response = await fetch(`${baseUrl}/webhooks/payments`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-webhook-signature': signature
+    },
+    body: payload
+  });
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ received: true, matched: true });
+  const stored = await service.getOrder(order.id);
+  expect(stored?.paymentStatus).toBe('COMPLETED');
+  expect(stored?.queuedAt).toBeInstanceOf(Date);
+  expect(await service.getQueueSize()).toBeGreaterThan(0);
 });
 
 test('validates Stripe webhook signatures', () => {

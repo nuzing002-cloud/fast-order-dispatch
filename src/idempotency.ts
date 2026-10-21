@@ -1,18 +1,35 @@
 import { createHash } from 'crypto';
 import { NextFunction, Request, RequestHandler, Response } from 'express';
 import { ValidationError } from './errors';
+import { logger } from './logger';
 
 export interface IdempotencyRecord {
   key: string;
   fingerprint: string;
+  /** 0 means the request is still in flight. */
   status: number;
   body: unknown;
   createdAt: number;
+  expiresAt: number;
+  /** Identifies the in-flight claim so a stale request cannot overwrite a newer one. */
+  claimToken?: string;
+}
+
+export interface IdempotencyClaim {
+  record: IdempotencyRecord;
+  claimed: boolean;
 }
 
 export interface IdempotencyStore {
-  getIdempotency(key: string): IdempotencyRecord | undefined;
-  saveIdempotency(record: IdempotencyRecord): void;
+  getIdempotency(key: string): Promise<IdempotencyRecord | undefined>;
+  claimIdempotency(
+    key: string,
+    fingerprint: string,
+    now: number,
+    expiresAt: number
+  ): Promise<IdempotencyClaim>;
+  completeIdempotency(record: IdempotencyRecord): Promise<void>;
+  releaseIdempotency(key: string, claimToken?: string): Promise<void>;
 }
 
 export interface IdempotencyOptions {
@@ -27,6 +44,8 @@ const APPLICABLE = [
   /^\/dispatch\/process$/
 ];
 
+const POLL_INTERVAL_MS = 50;
+
 export const IDEMPOTENCY_HEADER = 'idempotency-key';
 
 export function createIdempotencyMiddleware(
@@ -35,7 +54,6 @@ export function createIdempotencyMiddleware(
 ): RequestHandler {
   const ttlMs = options.ttlMs ?? 86_400_000;
   const timeoutMs = options.timeoutMs ?? 30_000;
-  const pending = new Map<string, Promise<IdempotencyRecord>>();
 
   return async (request: Request, response: Response, next: NextFunction): Promise<void> => {
     if (request.method !== 'POST' || !APPLICABLE.some((pattern) => pattern.test(request.path))) {
@@ -58,24 +76,26 @@ export function createIdempotencyMiddleware(
       }
 
       const fingerprint = fingerprintRequest(request);
-      const existing = store.getIdempotency(scopedKey);
-      if (existing && Date.now() - existing.createdAt <= ttlMs) {
-        if (existing.fingerprint !== fingerprint) {
+      const now = Date.now();
+      const claim = await store.claimIdempotency(scopedKey, fingerprint, now, now + ttlMs);
+
+      if (!claim.claimed) {
+        if (claim.record.fingerprint !== fingerprint) {
           response.status(409).json({
             error: 'Idempotency-Key was reused with a different request'
           });
           return;
         }
-        replay(response, existing);
-        return;
-      }
 
-      const inflight = pending.get(scopedKey);
-      if (inflight) {
-        const record = await withTimeout(inflight, timeoutMs);
-        if (record.fingerprint !== fingerprint) {
+        const record = await waitForCompletion(
+          store,
+          scopedKey,
+          fingerprint,
+          timeoutMs
+        );
+        if (!record) {
           response.status(409).json({
-            error: 'Idempotency-Key was reused with a different request'
+            error: 'Idempotency-Key is still being processed'
           });
           return;
         }
@@ -83,72 +103,81 @@ export function createIdempotencyMiddleware(
         return;
       }
 
-      let resolveRecord: (record: IdempotencyRecord) => void = () => undefined;
-      let rejectRecord: (error: Error) => void = () => undefined;
-      const pendingRecord = new Promise<IdempotencyRecord>((resolve, reject) => {
-        resolveRecord = resolve;
-        rejectRecord = reject;
-      });
-      pending.set(scopedKey, pendingRecord);
-
-      let captured: unknown;
       const originalJson = response.json.bind(response);
+      let persisted = false;
       response.json = ((body: unknown) => {
-        captured = body;
-        return originalJson(body);
-      }) as Response['json'];
-
-      const timer = setTimeout(() => {
-        rejectRecord(new Error('Idempotent request timed out'));
-        pending.delete(scopedKey);
-      }, timeoutMs);
-      timer.unref?.();
-
-      response.once('finish', () => {
-        clearTimeout(timer);
+        if (persisted) return response;
+        persisted = true;
+        if (response.statusCode >= 500) {
+          void store
+            .releaseIdempotency(scopedKey, claim.record.claimToken)
+            .catch(() => undefined);
+          originalJson(body);
+          return response;
+        }
         const record: IdempotencyRecord = {
           key: scopedKey,
           fingerprint,
           status: response.statusCode,
-          body: captured ?? null,
-          createdAt: Date.now()
+          body,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + ttlMs,
+          claimToken: claim.record.claimToken
         };
-        try {
-          store.saveIdempotency(record);
-          resolveRecord(record);
-        } catch {
-          rejectRecord(new Error('Failed to persist idempotency record'));
-        } finally {
-          pending.delete(scopedKey);
-        }
+        void store
+          .completeIdempotency(record)
+          .catch((error) => {
+            logger.error('idempotency_persist_failed', {
+              error: error instanceof Error ? error.message : String(error)
+            });
+            return store
+              .releaseIdempotency(scopedKey, claim.record.claimToken)
+              .catch(() => undefined);
+          })
+          .finally(() => {
+            originalJson(body);
+          });
+        return response;
+      }) as Response['json'];
+
+      response.once('close', () => {
+        if (persisted) return;
+        void store
+          .releaseIdempotency(scopedKey, claim.record.claimToken)
+          .catch(() => undefined);
       });
 
       next();
     } catch (error) {
-      pending.delete(scopedKey);
       next(error);
     }
   };
 }
 
+async function waitForCompletion(
+  store: IdempotencyStore,
+  key: string,
+  fingerprint: string,
+  timeoutMs: number
+): Promise<IdempotencyRecord | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const record = await store.getIdempotency(key);
+    if (record && record.status !== 0) {
+      return record.fingerprint === fingerprint ? record : undefined;
+    }
+    await delay(POLL_INTERVAL_MS);
+  }
+  return undefined;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function replay(response: Response, record: IdempotencyRecord): void {
   response.setHeader('Idempotent-Replayed', 'true');
   response.status(record.status).json(record.body);
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('Idempotent request timed out')), timeoutMs);
-        timer.unref?.();
-      })
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 export function fingerprintRequest(request: Request): string {

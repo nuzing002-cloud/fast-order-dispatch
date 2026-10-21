@@ -53,10 +53,10 @@ function makeDriver(id = DISPATCH_DRIVER_ID, maxOrdersPerBatch = 3): Driver {
 describe('BatchProcessingService', () => {
   test('assigns a batch only to the configured dispatch driver', async () => {
     const service = new BatchProcessingService();
-    service.registerDriver(makeDriver('other-driver'));
-    service.registerDriver(makeDriver());
-    service.addOrder(makeOrder('o1'));
-    service.addOrder(makeOrder('o2', 13.77, 100.52, 250));
+    await service.registerDriver(makeDriver('other-driver'));
+    await service.registerDriver(makeDriver());
+    await service.addOrder(makeOrder('o1'));
+    await service.addOrder(makeOrder('o2', 13.77, 100.52, 250));
 
     const batch = await service.processBatch();
 
@@ -67,72 +67,74 @@ describe('BatchProcessingService', () => {
     expect(batch?.deliverySequence).toHaveLength(2);
     expect(batch?.totalDistanceKm).toBeGreaterThan(0);
     expect(batch?.estimatedDurationMinutes).toBeGreaterThanOrEqual(1);
-    expect(service.getQueueSize()).toBe(0);
+    expect(await service.getQueueSize()).toBe(0);
   });
 
   test('processes at most batchSize orders and leaves the rest pending', async () => {
     const service = new BatchProcessingService();
-    service.registerDriver(makeDriver());
+    await service.registerDriver(makeDriver());
     for (let index = 1; index <= 5; index += 1) {
-      service.addOrder(makeOrder(`o${index}`));
+      await service.addOrder(makeOrder(`o${index}`));
     }
 
     const batch = await service.processBatch();
 
     expect(batch?.orderIds).toHaveLength(3);
-    expect(service.getQueueSize()).toBe(2);
+    expect(await service.getQueueSize()).toBe(2);
     expect(await service.processBatch()).toBeNull();
 
-    const driver = service.getDrivers().find((candidate) => candidate.id === DISPATCH_DRIVER_ID);
+    const driver = (await service.getDrivers()).find(
+      (candidate) => candidate.id === DISPATCH_DRIVER_ID
+    );
     expect(driver?.status).toBe(DriverStatus.BUSY);
     expect(driver?.assignedOrders).toEqual(batch?.orderIds);
   });
 
   test('marks assigned orders with driver and delivery estimate', async () => {
     const service = new BatchProcessingService();
-    service.registerDriver(makeDriver());
-    const order = makeOrder('o1');
-    service.addOrder(order);
+    await service.registerDriver(makeDriver());
+    await service.addOrder(makeOrder('o1'));
 
     const batch = await service.processBatch();
+    const order = await service.getOrder('o1');
 
     expect(batch?.deliverySequence).toEqual(['o1']);
-    expect(order.status).toBe(OrderStatus.ASSIGNED);
-    expect(order.assignedDriverId).toBe(DISPATCH_DRIVER_ID);
-    expect(order.assignedAt).toBeInstanceOf(Date);
-    expect(order.estimatedDeliveryTime).toBeInstanceOf(Date);
+    expect(order?.status).toBe(OrderStatus.ASSIGNED);
+    expect(order?.assignedDriverId).toBe(DISPATCH_DRIVER_ID);
+    expect(order?.assignedAt).toBeInstanceOf(Date);
+    expect(order?.estimatedDeliveryTime).toBeInstanceOf(Date);
   });
 
   test('returns null and keeps orders queued when no driver is available', async () => {
     const service = new BatchProcessingService();
-    service.addOrder(makeOrder('o1'));
+    await service.addOrder(makeOrder('o1'));
 
     expect(await service.processBatch()).toBeNull();
-    expect(service.getQueueSize()).toBe(1);
-    expect(service.getPendingOrders().map((order) => order.id)).toEqual(['o1']);
+    expect(await service.getQueueSize()).toBe(1);
+    expect((await service.getPendingOrders()).map((order) => order.id)).toEqual(['o1']);
   });
 
-  test('rejects duplicate queued orders', () => {
+  test('rejects duplicate queued orders', async () => {
     const service = new BatchProcessingService();
-    service.addOrder(makeOrder('o1'));
-    expect(() => service.addOrder(makeOrder('o1'))).toThrow('already exists');
+    await service.addOrder(makeOrder('o1'));
+    await expect(service.addOrder(makeOrder('o1'))).rejects.toThrow('already exists');
   });
 
-  test('rejects duplicate driver registration', () => {
+  test('rejects duplicate driver registration', async () => {
     const service = new BatchProcessingService();
-    service.registerDriver(makeDriver());
-    expect(() => service.registerDriver(makeDriver())).toThrow('already exists');
+    await service.registerDriver(makeDriver());
+    await expect(service.registerDriver(makeDriver())).rejects.toThrow('already exists');
   });
 
-  test('returns defensive driver copies', () => {
+  test('returns defensive driver copies', async () => {
     const service = new BatchProcessingService();
-    service.registerDriver(makeDriver());
+    await service.registerDriver(makeDriver());
 
-    const [driver] = service.getDrivers();
+    const [driver] = await service.getDrivers();
     driver?.assignedOrders.push('injected');
     if (driver) driver.status = DriverStatus.OFFLINE;
 
-    const [stored] = service.getDrivers();
+    const [stored] = await service.getDrivers();
     expect(stored?.assignedOrders).toEqual([]);
     expect(stored?.status).toBe(DriverStatus.AVAILABLE);
   });

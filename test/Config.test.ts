@@ -8,6 +8,8 @@ test('uses development defaults', () => {
   expect(config.rateLimitWindowMs).toBe(60_000);
   expect(config.dispatchDriverIds).toEqual([DISPATCH_DRIVER_ID]);
   expect(config.trustProxy).toBe(false);
+  expect(config.databaseUrl).toBeUndefined();
+  expect(config.dbPoolMax).toBe(10);
 });
 
 test('parses configured values', () => {
@@ -16,17 +18,97 @@ test('parses configured values', () => {
     RATE_LIMIT_MAX: '25',
     RATE_LIMIT_WINDOW_MS: '1000',
     DISPATCH_DRIVER_IDS: ' a, b ,, c',
-    TRUST_PROXY: 'true'
+    TRUST_PROXY: 'true',
+    DATABASE_POOL_MAX: '4',
+    DATABASE_SSL: 'true'
   });
   expect(config.apiKey).toBe('secret');
   expect(config.rateLimitMax).toBe(25);
   expect(config.rateLimitWindowMs).toBe(1000);
   expect(config.dispatchDriverIds).toEqual(['a', 'b', 'c']);
   expect(config.trustProxy).toBe(true);
+  expect(config.dbPoolMax).toBe(4);
+  expect(config.databaseSsl).toBe(true);
 });
 
 test('rejects invalid configuration', () => {
+  expect(() => loadConfig({ DATABASE_URL: 'mysql://db/dispatch' })).toThrow('DATABASE_URL');
+  expect(() => loadConfig({ DATABASE_URL: 'not-a-url' })).toThrow('DATABASE_URL');
+  expect(() =>
+    loadConfig({
+      DATABASE_URL: 'postgres://db/dispatch',
+      PGLITE_DATA_DIR: './.pglite'
+    })
+  ).toThrow('either DATABASE_URL or PGLITE_DATA_DIR');
   expect(() => loadConfig({ RATE_LIMIT_MAX: 'many' })).toThrow('RATE_LIMIT_MAX');
   expect(() => loadConfig({ RATE_LIMIT_WINDOW_MS: '10' })).toThrow('RATE_LIMIT_WINDOW_MS');
   expect(() => loadConfig({ DISPATCH_DRIVER_IDS: ' , ' })).toThrow('DISPATCH_DRIVER_IDS');
+});
+
+test('allows wildcard CORS outside production', () => {
+  expect(loadConfig({}).corsOrigins).toEqual(['*']);
+  expect(loadConfig({ CORS_ORIGIN: '*' }).corsOrigins).toEqual(['*']);
+});
+
+test('normalizes explicit CORS origins', () => {
+  const config = loadConfig({
+    CORS_ORIGIN: 'https://orders.example.com, https://admin.example.com/'
+  });
+  expect(config.corsOrigins).toEqual(['https://orders.example.com', 'https://admin.example.com']);
+});
+
+test('rejects invalid CORS origins', () => {
+  expect(() => loadConfig({ CORS_ORIGIN: 'not-a-url' })).toThrow('CORS_ORIGIN');
+  expect(() => loadConfig({ CORS_ORIGIN: 'ftp://example.com' })).toThrow('CORS_ORIGIN');
+  expect(() => loadConfig({ CORS_ORIGIN: 'https://example.com/path' })).toThrow('CORS_ORIGIN');
+});
+
+const productionEnv: NodeJS.ProcessEnv = {
+  NODE_ENV: 'production',
+  API_KEYS: 'production-token-0123456789:admin',
+  RATE_LIMIT_MAX: '120',
+  DISPATCH_DRIVER_IDS: 'driver-1',
+  CORS_ORIGIN: 'https://orders.example.com',
+  DATABASE_URL: 'postgres://dispatch:secret@db:5432/dispatch',
+  REDIS_URL: 'redis://redis:6379',
+  PAYMENT_PROVIDER: 'stripe',
+  STRIPE_SECRET_KEY: 'sk_live_example',
+  STRIPE_WEBHOOK_SECRET: 'whsec_example'
+};
+
+test('accepts a hardened production configuration', () => {
+  const config = loadConfig(productionEnv);
+  expect(config.isProduction).toBe(true);
+  expect(config.nodeEnv).toBe('production');
+  expect(config.corsOrigins).toEqual(['https://orders.example.com']);
+  expect(config.databaseUrl).toBe('postgres://dispatch:secret@db:5432/dispatch');
+  expect(config.redisUrl).toBe('redis://redis:6379');
+});
+
+const unsafeProductionEnv: Array<[string, NodeJS.ProcessEnv, string]> = [
+  ['missing api keys', { API_KEYS: undefined }, 'API_KEYS'],
+  ['short api key', { API_KEYS: 'short:admin' }, 'at least 16 characters'],
+  ['placeholder api key', { API_KEYS: 'replace-me-with-a-long-token:admin' }, 'placeholder'],
+  ['wildcard cors', { CORS_ORIGIN: '*' }, 'CORS_ORIGIN'],
+  ['missing cors', { CORS_ORIGIN: undefined }, 'CORS_ORIGIN'],
+  ['disabled rate limit', { RATE_LIMIT_MAX: '0' }, 'RATE_LIMIT_MAX'],
+  ['mock payment', { PAYMENT_PROVIDER: 'mock' }, 'PAYMENT_PROVIDER'],
+  ['missing database url', { DATABASE_URL: undefined }, 'DATABASE_URL'],
+  ['pglite in production', { PGLITE_DATA_DIR: './.pglite' }, 'PGLITE_DATA_DIR'],
+  ['missing redis', { REDIS_URL: undefined }, 'REDIS_URL'],
+  ['legacy sqlite path', { DB_PATH: './data/dispatch.sqlite3' }, 'DB_PATH'],
+  ['missing stripe webhook secret', { STRIPE_WEBHOOK_SECRET: undefined }, 'STRIPE_WEBHOOK_SECRET'],
+  [
+    'missing http webhook secret',
+    {
+      PAYMENT_PROVIDER: 'http',
+      PAYMENT_GATEWAY_URL: 'https://payments.example.com/charge',
+      PAYMENT_WEBHOOK_SECRET: undefined
+    },
+    'PAYMENT_WEBHOOK_SECRET'
+  ]
+];
+
+test.each(unsafeProductionEnv)('rejects unsafe production config: %s', (_name, env, message) => {
+  expect(() => loadConfig({ ...productionEnv, ...env })).toThrow(message);
 });

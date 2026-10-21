@@ -8,6 +8,13 @@ dotenv.config();
 export type PaymentProviderName = 'mock' | 'http' | 'stripe';
 
 export interface AppConfig {
+  nodeEnv: string;
+  isProduction: boolean;
+  corsOrigins: string[];
+  databaseUrl?: string;
+  databaseSsl: boolean;
+  dbPoolMax: number;
+  pglitePath?: string;
   apiKey?: string;
   apiKeys: ApiKeyEntry[];
   rateLimitWindowMs: number;
@@ -26,6 +33,19 @@ export interface AppConfig {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const nodeEnv = (env.NODE_ENV ?? 'development').trim().toLowerCase() || 'development';
+  const isProduction = nodeEnv === 'production';
+  const corsOrigins = parseCorsOrigins(env.CORS_ORIGIN, isProduction);
+  const databaseUrl = parseDatabaseUrl(env.DATABASE_URL);
+  const pglitePath = env.PGLITE_DATA_DIR?.trim() || undefined;
+  if (databaseUrl && pglitePath) {
+    throw new ValidationError('Set either DATABASE_URL or PGLITE_DATA_DIR, not both');
+  }
+  if (env.DB_PATH?.trim()) {
+    throw new ValidationError(
+      'DB_PATH is no longer supported; use DATABASE_URL for PostgreSQL or PGLITE_DATA_DIR for local development'
+    );
+  }
   const apiKey = env.API_KEY?.trim() || undefined;
   const apiKeys = parseApiKeys(env.API_KEYS, apiKey);
 
@@ -54,7 +74,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ValidationError('STRIPE_SECRET_KEY is required when PAYMENT_PROVIDER=stripe');
   }
 
-  return {
+  const config: AppConfig = {
+    nodeEnv,
+    isProduction,
+    corsOrigins,
+    databaseUrl,
+    databaseSsl: env.DATABASE_SSL === '1' || env.DATABASE_SSL === 'true',
+    dbPoolMax: integer(env.DATABASE_POOL_MAX, 10, 1, 'DATABASE_POOL_MAX'),
+    pglitePath,
     apiKey,
     apiKeys,
     rateLimitWindowMs,
@@ -72,6 +99,124 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     stripeApiBase: env.STRIPE_API_BASE?.trim() || undefined,
     redisUrl: env.REDIS_URL?.trim() || undefined
   };
+
+  validateProductionConfig(config);
+
+  return config;
+}
+
+function parseCorsOrigins(value: string | undefined, isProduction: boolean): string[] {
+  const raw = value?.trim();
+  if (!raw) {
+    if (isProduction) {
+      throw new ValidationError('CORS_ORIGIN is required when NODE_ENV=production');
+    }
+    return ['*'];
+  }
+
+  const origins = raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
+  if (origins.length === 0) {
+    throw new ValidationError('CORS_ORIGIN must contain at least one origin');
+  }
+  if (origins.includes('*')) {
+    if (isProduction) {
+      throw new ValidationError('CORS_ORIGIN must not contain "*" when NODE_ENV=production');
+    }
+    return ['*'];
+  }
+
+  return [...new Set(origins.map(validateOrigin))];
+}
+
+function validateOrigin(origin: string): string {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    throw new ValidationError(`CORS_ORIGIN entry is not a valid URL: ${origin}`);
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new ValidationError(`CORS_ORIGIN entry must use http or https: ${origin}`);
+  }
+  if (
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname !== '/' && url.pathname !== '')
+  ) {
+    throw new ValidationError(
+      `CORS_ORIGIN entry must be an origin without path, query, or credentials: ${origin}`
+    );
+  }
+
+  return url.origin;
+}
+
+function validateProductionConfig(config: AppConfig): void {
+  if (!config.isProduction) return;
+
+  if (config.apiKeys.length === 0) {
+    throw new ValidationError('API_KEYS or API_KEY is required when NODE_ENV=production');
+  }
+  for (const entry of config.apiKeys) {
+    if (entry.key.length < 16) {
+      throw new ValidationError('API keys must be at least 16 characters when NODE_ENV=production');
+    }
+    if (/change[-_]?me|replace[-_]?me/i.test(entry.key)) {
+      throw new ValidationError(
+        'API keys must not use placeholder values when NODE_ENV=production'
+      );
+    }
+  }
+
+  if (config.rateLimitMax <= 0) {
+    throw new ValidationError('RATE_LIMIT_MAX must be greater than 0 when NODE_ENV=production');
+  }
+  if (config.paymentProvider === 'mock') {
+    throw new ValidationError(
+      'PAYMENT_PROVIDER must be http or stripe when NODE_ENV=production'
+    );
+  }
+  if (config.paymentProvider === 'http' && !config.paymentWebhookSecret) {
+    throw new ValidationError(
+      'PAYMENT_WEBHOOK_SECRET is required when PAYMENT_PROVIDER=http and NODE_ENV=production'
+    );
+  }
+  if (config.paymentProvider === 'stripe' && !config.stripeWebhookSecret) {
+    throw new ValidationError(
+      'STRIPE_WEBHOOK_SECRET (or PAYMENT_WEBHOOK_SECRET) is required when PAYMENT_PROVIDER=stripe and NODE_ENV=production'
+    );
+  }
+  if (!config.databaseUrl) {
+    throw new ValidationError('DATABASE_URL is required when NODE_ENV=production');
+  }
+  if (config.pglitePath) {
+    throw new ValidationError('PGLITE_DATA_DIR must not be used when NODE_ENV=production');
+  }
+  if (!config.redisUrl) {
+    throw new ValidationError('REDIS_URL is required when NODE_ENV=production');
+  }
+}
+
+function parseDatabaseUrl(value: string | undefined): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ValidationError('DATABASE_URL must be a valid PostgreSQL connection string');
+  }
+  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
+    throw new ValidationError('DATABASE_URL must use the postgres or postgresql protocol');
+  }
+  return raw;
 }
 
 function integer(

@@ -203,6 +203,17 @@ export const openApiSpec = {
         responses: { '200': { description: 'Metrics snapshot' } }
       }
     },
+    '/metrics/prometheus': {
+      get: {
+        summary: 'Dispatch and process metrics in Prometheus text format',
+        responses: {
+          '200': {
+            description: 'Prometheus exposition',
+            content: { 'text/plain': { schema: { type: 'string' } } }
+          }
+        }
+      }
+    },
     '/audit': {
       get: {
         summary: 'List audit entries (admin only)',

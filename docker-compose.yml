@@ -4,10 +4,14 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
       HOST: 0.0.0.0
-      DB_PATH: /app/data/dispatch.sqlite3
-      REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      DATABASE_URL: postgres://${POSTGRES_USER:-dispatch}:${POSTGRES_PASSWORD:-dispatch}@postgres:5432/${POSTGRES_DB:-dispatch}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       API_KEY: ${API_KEY:-}
       API_KEYS: ${API_KEYS:-}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
@@ -20,9 +24,9 @@ services:
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-    volumes:
-      - dispatch-data:/app/data
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -36,8 +40,27 @@ services:
       timeout: 5s
       retries: 3
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dispatch}
+      POSTGRES_USER: ${POSTGRES_USER:-dispatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dispatch}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -46,4 +69,4 @@ services:
       retries: 10
 
 volumes:
-  dispatch-data:
+  postgres-data:

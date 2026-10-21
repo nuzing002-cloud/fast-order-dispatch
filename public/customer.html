@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>สั่งอาหาร | fast-order-dispatch</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">F</span>
+        <span>fast-order-dispatch</span>
+      </a>
+      <nav class="nav">
+        <a href="/">หน้าแรก</a>
+        <a href="/customer.html" class="active">สั่งอาหาร</a>
+        <a href="/driver.html">คนขับ</a>
+        <a href="/admin.html">แอดมิน</a>
+        <a href="/docs">API Docs</a>
+      </nav>
+      <div class="keybar">
+        <input data-api-key type="password" placeholder="API key (ถ้ามี)" autocomplete="off" />
+        <button data-save-key class="btn-small">บันทึก</button>
+      </div>
+      <span data-key-state class="badge status-PENDING">ยังไม่ได้ใส่ API key</span>
+    </header>
+
+    <main class="container">
+      <div class="page-head">
+        <div>
+          <h1>สร้างออเดอร์</h1>
+          <p>กรอกข้อมูลร้านและลูกค้า ระบบจะชำระเงินและพยายามจ่ายงานให้คนขับทันที</p>
+        </div>
+        <span class="badge status-PENDING" id="paymentMode">payment: mock</span>
+      </div>
+
+      <div class="split">
+        <section class="card">
+          <form id="orderForm">
+            <fieldset>
+              <legend>ร้านอาหาร</legend>
+              <div class="form-grid">
+                <label>รหัสร้าน<input id="restaurantId" value="r1" required /></label>
+                <label>ชื่อร้าน<input id="restaurantName" value="ร้านทดสอบ" required /></label>
+                <label class="wide">ที่อยู่<input id="restaurantAddress" value="123 ถนนสุขุมวิท กรุงเทพฯ" required /></label>
+                <label>โทรศัพท์<input id="restaurantPhone" value="0000000000" required /></label>
+                <label>เวลาเตรียม (นาที)<input id="preparationTime" type="number" min="0" value="10" required /></label>
+                <label>ละติจูด<input id="restaurantLat" type="number" step="any" value="13.7563" required /></label>
+                <label>ลองจิจูด<input id="restaurantLng" type="number" step="any" value="100.5018" required /></label>
+              </div>
+            </fieldset>
+
+            <fieldset style="margin-top: 12px">
+              <legend>ลูกค้า</legend>
+              <div class="form-grid">
+                <label>รหัสลูกค้า<input id="customerId" required /></label>
+                <label>ชื่อ<input id="customerName" value="ลูกค้าทดสอบ" required /></label>
+                <label>โทรศัพท์<input id="customerPhone" value="0000000000" required /></label>
+                <label>อีเมล (ไม่บังคับ)<input id="customerEmail" type="email" placeholder="name@example.com" /></label>
+                <label class="wide">ที่อยู่จัดส่ง<input id="customerAddress" value="456 ถนนพระราม 9 กรุงเทพฯ" required /></label>
+                <label>ละติจูด<input id="customerLat" type="number" step="any" value="13.7466" required /></label>
+                <label>ลองจิจูด<input id="customerLng" type="number" step="any" value="100.5347" required /></label>
+              </div>
+            </fieldset>
+
+            <fieldset style="margin-top: 12px">
+              <legend>รายการอาหาร</legend>
+              <div id="items" class="card-list"></div>
+              <button type="button" class="btn-ghost btn-small" id="addItem" style="margin-top: 10px">+ เพิ่มรายการ</button>
+            </fieldset>
+
+            <div class="form-grid" style="margin-top: 12px">
+              <label>ค่าส่ง (บาท)<input id="deliveryFee" type="number" min="0" step="any" value="10" required /></label>
+              <label>หมายเหตุ<input id="notes" placeholder="ไม่บังคับ" /></label>
+            </div>
+
+            <div class="row" style="margin-top: 16px">
+              <div class="spacer">
+                <div class="muted small">ยอดรวม</div>
+                <div class="stat-value" id="totalPreview">฿0.00</div>
+              </div>
+              <button type="submit" class="btn-primary" id="submitOrder">ชำระเงินและสร้างออเดอร์</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>ติดตามออเดอร์</h2>
+          <div class="row" style="margin-bottom: 12px">
+            <input id="trackId" class="mono" placeholder="order_xxx" style="flex: 1" />
+            <button id="trackButton" class="btn-small">ค้นหา</button>
+          </div>
+          <div id="tracking">
+            <p class="muted small">สร้างออเดอร์หรือกรอก Order ID เพื่อดูสถานะ</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/common.js"></script>
+    <script src="/customer.js"></script>
+  </body>
+</html>

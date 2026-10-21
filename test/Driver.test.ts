@@ -88,7 +88,7 @@ describe('multi-driver dispatch', () => {
     const multiService = new BatchProcessingService(3, undefined, {
       dispatchDriverIds: ['1388246780', 'driver-2']
     });
-    registerMultiDrivers(multiService);
+    await registerMultiDrivers(multiService);
     const app = createDispatchApp({ service: multiService });
     const multiServer = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => multiServer.once('listening', resolve));
@@ -112,21 +112,25 @@ describe('multi-driver dispatch', () => {
 
   test('ignores drivers outside the allowed list', async () => {
     const restricted = new BatchProcessingService();
-    restricted.registerDriver({ ...makeDriver('outsider'), currentLatitude: 13.76, currentLongitude: 100.51 });
-    restricted.addOrder(makeOrder('o1'));
+    await restricted.registerDriver({
+      ...makeDriver('outsider'),
+      currentLatitude: 13.76,
+      currentLongitude: 100.51
+    });
+    await restricted.addOrder(makeOrder('o1'));
 
     expect(await restricted.processBatch()).toBeNull();
-    expect(restricted.getQueueSize()).toBe(1);
+    expect(await restricted.getQueueSize()).toBe(1);
   });
 });
 
-function registerMultiDrivers(target: BatchProcessingService): void {
-  target.registerDriver({
+async function registerMultiDrivers(target: BatchProcessingService): Promise<void> {
+  await target.registerDriver({
     ...makeDriver(),
     currentLatitude: 13.4,
     currentLongitude: 100.4
   });
-  target.registerDriver({
+  await target.registerDriver({
     ...makeDriver('driver-2'),
     currentLatitude: 13.9,
     currentLongitude: 100.9

@@ -59,6 +59,8 @@ export interface Order {
   /** Sum of items before the delivery fee. */
   status: OrderStatus;
   paymentStatus: PaymentStatus;
+  /** Present while the order is waiting in the dispatch queue. */
+  queuedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
   assignedDriverId?: string;
