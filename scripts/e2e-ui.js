@@ -71,14 +71,32 @@ async function run() {
     if (!results.pwa.manifestHref) fail('manifest link missing');
     if (!results.pwa.themeColor) fail('theme-color missing');
 
-    // --- Customer: create order (defaults, mock pay, auto dispatch) ---
+    // --- Customer: create order; it waits PENDING until the restaurant marks READY ---
     await open(page, errors, '/customer.html');
     await page.waitForSelector('#submitOrder');
     await page.click('#submitOrder');
     await page.waitForFunction(() => document.querySelector('#tracking .order-card, #tracking .card, #tracking [data-cancel]'), { timeout: 20000 });
     const orderBody = await text(page, '#tracking');
-    const orderId = orderBody.match(/order_[a-z0-9]+/i)?.[0];
+    const orderId = orderBody.match(/order_[a-z0-9-]+/i)?.[0];
     if (!orderId) fail(`no order id in tracking: ${orderBody?.slice(0, 200)}`);
+
+    const beforeReady = await page.evaluate(async (id) => {
+      const response = await fetch(`/orders/${encodeURIComponent(id)}`);
+      return (await response.json()).order.status;
+    }, orderId);
+    if (beforeReady !== 'PENDING') fail(`order should wait for the restaurant, got ${beforeReady}`);
+
+    const readyResponse = await page.evaluate(async (id) => {
+      const response = await fetch(`/orders/${encodeURIComponent(id)}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'READY' })
+      });
+      return { status: response.status, body: await response.json() };
+    }, orderId);
+    if (readyResponse.status !== 200) fail(`READY failed: ${JSON.stringify(readyResponse.body)}`);
+    if (readyResponse.body.order.status !== 'ASSIGNED') fail(`READY was not dispatched: ${readyResponse.body.order.status}`);
+
     results.customer = { orderId, errors: [...errors] };
     await shot(page, '02-customer-order');
 

@@ -467,7 +467,7 @@ export class MemoryDispatchStore implements DispatchStore {
 
   queuedOrders(): Order[] {
     return [...this.orders.values()]
-      .filter((order) => order.status === OrderStatus.PENDING && order.queuedAt !== undefined)
+      .filter((order) => order.status === OrderStatus.READY && order.queuedAt !== undefined)
       .sort((left, right) => {
         const queueOrder = left.queuedAt!.getTime() - right.queuedAt!.getTime();
         if (queueOrder !== 0) return queueOrder;
@@ -595,8 +595,7 @@ class MemoryDispatchTransaction implements DispatchTransaction {
       .filter(
         (driver) =>
           allowed.has(driver.id) &&
-          driver.isAvailable &&
-          driver.status === DriverStatus.AVAILABLE
+          (driver.status === DriverStatus.AVAILABLE || driver.status === DriverStatus.BUSY)
       )
       .sort((left, right) => left.id.localeCompare(right.id))
       .map(cloneDriver);

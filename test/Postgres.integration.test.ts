@@ -164,7 +164,7 @@ describePostgres('PostgreSQL integration', () => {
     await service.addOrder(second);
     expect((await service.processBatch())?.orderIds).toContain('decline-order');
     const declined = await service.declineOrder('decline-order', driverId);
-    expect(declined.order.status).toBe(OrderStatus.PENDING);
+    expect(declined.order.status).toBe(OrderStatus.READY);
     expect(declined.order.assignedDriverId).toBeUndefined();
     expect(declined.order.declinedDriverIds).toContain(driverId);
 

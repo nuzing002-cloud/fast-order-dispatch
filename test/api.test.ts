@@ -159,14 +159,19 @@ test('runs the full order lifecycle over HTTP', async () => {
   expect(created.status).toBe(201);
   const createdBody = await created.json();
   expect(createdBody.transaction.status).toBe('COMPLETED');
-  expect(createdBody.assignedToTargetDriver).toBe(true);
-  expect(createdBody.batch.driverId).toBe('1388246780');
-  expect(createdBody.batch.totalPreparationMinutes).toBe(5);
+  expect(createdBody.assignedToTargetDriver).toBe(false);
+  expect(createdBody.batch).toBeNull();
   expect(createdBody.queueSize).toBe(0);
 
   const fetched = await fetch(`${baseUrl}/orders/o1`);
   expect(fetched.status).toBe(200);
-  expect((await fetched.json()).order.paymentStatus).toBe('COMPLETED');
+  const fetchedBody = await fetched.json();
+  expect(fetchedBody.order.paymentStatus).toBe('COMPLETED');
+  expect(fetchedBody.order.status).toBe('PENDING');
+
+  const ready = await patch('/orders/o1/status', { status: 'READY' });
+  expect(ready.status).toBe(200);
+  expect((await ready.json()).order.status).toBe('ASSIGNED');
 
   for (const status of ['PICKED_UP', 'IN_DELIVERY', 'DELIVERED']) {
     const response = await patch('/orders/o1/status', { status });

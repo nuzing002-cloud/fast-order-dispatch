@@ -90,6 +90,69 @@ describe('BatchProcessingService', () => {
     expect(driver?.assignedOrders).toEqual(batch?.orderIds);
   });
 
+  test('dispatches only after the restaurant marks the order READY', async () => {
+    const service = new BatchProcessingService();
+    await service.registerDriver(makeDriver());
+    await service.addOrder(makeOrder('o1'), false);
+
+    expect(await service.processBatch()).toBeNull();
+    expect(await service.getQueueSize()).toBe(0);
+    expect((await service.getOrder('o1'))?.status).toBe(OrderStatus.PENDING);
+
+    const ready = await service.updateOrderStatus('o1', OrderStatus.READY);
+    expect(ready.status).toBe(OrderStatus.READY);
+    expect(await service.getQueueSize()).toBe(1);
+
+    const batch = await service.processBatch();
+    expect(batch?.orderIds).toEqual(['o1']);
+  });
+
+  test('assigns four orders and replenishes a busy driver before the last delivery', async () => {
+    const service = new BatchProcessingService(4);
+    await service.registerDriver(makeDriver(DISPATCH_DRIVER_ID, 4));
+    for (let index = 1; index <= 6; index += 1) {
+      await service.addOrder(makeOrder(`o${index}`, 13.7563 + index * 0.0001, 100.5018));
+    }
+
+    const first = await service.processBatch();
+    expect(first?.orderIds).toHaveLength(4);
+    expect(await service.getQueueSize()).toBe(2);
+
+    const deliver = async (orderId: string): Promise<void> => {
+      await service.updateOrderStatus(orderId, OrderStatus.PICKED_UP);
+      await service.updateOrderStatus(orderId, OrderStatus.IN_DELIVERY);
+      await service.updateOrderStatus(orderId, OrderStatus.DELIVERED);
+    };
+    await deliver(first!.orderIds[0]!);
+    await deliver(first!.orderIds[1]!);
+
+    const driver = (await service.getDrivers()).find(
+      (candidate) => candidate.id === DISPATCH_DRIVER_ID
+    );
+    expect(driver?.status).toBe(DriverStatus.BUSY);
+
+    const second = await service.processBatch();
+    expect(second?.orderIds).toHaveLength(2);
+    expect(second?.orderIds).not.toEqual(expect.arrayContaining(first!.orderIds.slice(0, 2)));
+    expect(await service.getQueueSize()).toBe(0);
+  });
+
+  test('dispatches the nearest queued orders first', async () => {
+    const service = new BatchProcessingService(4);
+    await service.registerDriver(makeDriver(DISPATCH_DRIVER_ID, 4));
+    await service.addOrder(makeOrder('far', 14.0, 100.9));
+    await service.addOrder(makeOrder('near', 13.7563, 100.5018));
+    await service.addOrder(makeOrder('mid', 13.8, 100.6));
+    await service.addOrder(makeOrder('near2', 13.757, 100.502));
+    await service.addOrder(makeOrder('mid2', 13.9, 100.7));
+
+    const batch = await service.processBatch();
+
+    expect(batch?.orderIds).toHaveLength(4);
+    expect(batch?.orderIds[0]).toBe('near');
+    expect(batch?.orderIds).not.toContain('far');
+  });
+
   test('marks assigned orders with driver and delivery estimate', async () => {
     const service = new BatchProcessingService();
     await service.registerDriver(makeDriver());

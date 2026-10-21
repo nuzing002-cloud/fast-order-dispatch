@@ -3,7 +3,8 @@
   const DRIVER_STORAGE = 'fod.driverId';
 
   const ORDER_LABELS = {
-    PENDING: 'รอคิว',
+    PENDING: 'รอยืนยันร้าน',
+    READY: 'ร้านพร้อมส่ง',
     ASSIGNED: 'มอบหมายแล้ว',
     PICKED_UP: 'รับอาหารแล้ว',
     IN_DELIVERY: 'กำลังส่ง',
@@ -28,7 +29,8 @@
   };
 
   const NEXT_STATUS = {
-    PENDING: ['CANCELLED', 'FAILED'],
+    PENDING: ['READY', 'CANCELLED', 'FAILED'],
+    READY: ['CANCELLED', 'FAILED'],
     ASSIGNED: ['PICKED_UP', 'CANCELLED', 'FAILED'],
     PICKED_UP: ['IN_DELIVERY', 'CANCELLED', 'FAILED'],
     IN_DELIVERY: ['DELIVERED', 'FAILED'],
@@ -37,7 +39,7 @@
     FAILED: []
   };
 
-  const FLOW = ['PENDING', 'ASSIGNED', 'PICKED_UP', 'IN_DELIVERY', 'DELIVERED'];
+  const FLOW = ['PENDING', 'READY', 'ASSIGNED', 'PICKED_UP', 'IN_DELIVERY', 'DELIVERED'];
 
   function getKey() {
     return localStorage.getItem(KEY_STORAGE) || '';

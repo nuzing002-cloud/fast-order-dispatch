@@ -390,6 +390,7 @@ button:disabled {
 }
 
 .status-PENDING,
+.status-READY,
 .status-ON_BREAK {
   color: var(--amber);
 }

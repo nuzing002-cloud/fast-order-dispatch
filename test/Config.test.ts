@@ -7,6 +7,7 @@ test('uses development defaults', () => {
   expect(config.rateLimitMax).toBe(0);
   expect(config.rateLimitWindowMs).toBe(60_000);
   expect(config.dispatchDriverIds).toEqual([DISPATCH_DRIVER_ID]);
+  expect(config.dispatchBatchSize).toBe(4);
   expect(config.trustProxy).toBe(false);
   expect(config.databaseUrl).toBeUndefined();
   expect(config.dbPoolMax).toBe(10);
@@ -18,6 +19,7 @@ test('parses configured values', () => {
     RATE_LIMIT_MAX: '25',
     RATE_LIMIT_WINDOW_MS: '1000',
     DISPATCH_DRIVER_IDS: ' a, b ,, c',
+    DISPATCH_BATCH_SIZE: '6',
     TRUST_PROXY: 'true',
     DATABASE_POOL_MAX: '4',
     DATABASE_SSL: 'true'
@@ -26,6 +28,7 @@ test('parses configured values', () => {
   expect(config.rateLimitMax).toBe(25);
   expect(config.rateLimitWindowMs).toBe(1000);
   expect(config.dispatchDriverIds).toEqual(['a', 'b', 'c']);
+  expect(config.dispatchBatchSize).toBe(6);
   expect(config.trustProxy).toBe(true);
   expect(config.dbPoolMax).toBe(4);
   expect(config.databaseSsl).toBe(true);
@@ -43,6 +46,8 @@ test('rejects invalid configuration', () => {
   expect(() => loadConfig({ RATE_LIMIT_MAX: 'many' })).toThrow('RATE_LIMIT_MAX');
   expect(() => loadConfig({ RATE_LIMIT_WINDOW_MS: '10' })).toThrow('RATE_LIMIT_WINDOW_MS');
   expect(() => loadConfig({ DISPATCH_DRIVER_IDS: ' , ' })).toThrow('DISPATCH_DRIVER_IDS');
+  expect(() => loadConfig({ DISPATCH_BATCH_SIZE: '0' })).toThrow('DISPATCH_BATCH_SIZE');
+  expect(() => loadConfig({ DISPATCH_BATCH_SIZE: '51' })).toThrow('DISPATCH_BATCH_SIZE');
 });
 
 test('allows wildcard CORS outside production', () => {

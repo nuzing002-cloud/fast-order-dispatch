@@ -5,7 +5,7 @@ import { createDispatchApp } from '../src/index';
 import { verifyStripeSignature } from '../src/services/PaymentGateways';
 import { BatchProcessingService } from '../src/services/BatchProcessingService';
 import { MemoryDispatchStore } from '../src/store/DispatchStore';
-import { PaymentStatus } from '../src/types/order';
+import { OrderStatus, PaymentStatus } from '../src/types/order';
 import { makeDriver, makeOrder } from './helpers';
 
 let server: Server;
@@ -174,7 +174,7 @@ test('verifies payment webhook signatures', async () => {
   expect(rejected.status).toBe(400);
 });
 
-test('enqueues an order when a webhook confirms a late payment', async () => {
+test('records a late payment but waits for the restaurant to mark the order READY', async () => {
   const order = makeOrder('webhook-late');
   await service.addOrder(order, false);
   await service.recordPayment({
@@ -207,8 +207,13 @@ test('enqueues an order when a webhook confirms a late payment', async () => {
   expect(await response.json()).toEqual({ received: true, matched: true });
   const stored = await service.getOrder(order.id);
   expect(stored?.paymentStatus).toBe('COMPLETED');
-  expect(stored?.queuedAt).toBeInstanceOf(Date);
-  expect(await service.getQueueSize()).toBeGreaterThan(0);
+  expect(stored?.status).toBe(OrderStatus.PENDING);
+  expect(stored?.queuedAt).toBeUndefined();
+  expect(await service.getQueueSize()).toBe(0);
+
+  await service.updateOrderStatus(order.id, OrderStatus.READY);
+  expect(await service.getQueueSize()).toBe(1);
+  expect((await service.getOrder(order.id))?.queuedAt).toBeInstanceOf(Date);
 });
 
 test('validates Stripe webhook signatures', () => {

@@ -202,7 +202,7 @@ function parseDriver(value: unknown): Driver {
       ? true
       : value.acceptsNewOrders === true,
     maxOrdersPerBatch: value.maxOrdersPerBatch === undefined
-      ? 3
+      ? 4
       : positiveInteger(value.maxOrdersPerBatch, 'maxOrdersPerBatch'),
     lastLocationUpdate: value.lastLocationUpdate === undefined
       ? undefined
@@ -659,22 +659,12 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         return;
       }
 
-      await service.enqueueOrder(order.id);
-      const batch = await service.processBatch().catch((error) => {
-        logger.warn('post_create_dispatch_failed', {
-          orderId: order.id,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        return null;
-      });
       response.status(201).json({
         order: await service.getOrder(order.id),
         transaction,
-        batch,
-        assignedDriverId: batch?.driverId ?? null,
-        assignedToTargetDriver: batch
-          ? service.getDispatchDriverIds().includes(batch.driverId)
-          : false,
+        batch: null,
+        assignedDriverId: null,
+        assignedToTargetDriver: false,
         queueSize: await service.getQueueSize()
       });
     })
@@ -722,22 +712,12 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         return;
       }
 
-      await service.enqueueOrder(orderId);
-      const batch = await service.processBatch().catch((error) => {
-        logger.warn('post_payment_dispatch_failed', {
-          orderId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        return null;
-      });
       response.json({
         order: await service.getOrder(orderId),
         transaction,
-        batch,
-        assignedDriverId: batch?.driverId ?? null,
-        assignedToTargetDriver: batch
-          ? service.getDispatchDriverIds().includes(batch.driverId)
-          : false,
+        batch: null,
+        assignedDriverId: null,
+        assignedToTargetDriver: false,
         queueSize: await service.getQueueSize()
       });
     })
@@ -802,7 +782,15 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         : parseOrderStatus(undefined);
       const order = await service.updateOrderStatus(routeParam(request, 'id'), status);
       await audit(request, 'order.status_changed', 'order', order.id, { status });
-      response.json({ order });
+      if (order.status === OrderStatus.READY) {
+        await service.processBatch().catch((error) => {
+          logger.warn('ready_dispatch_failed', {
+            orderId: order.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+      }
+      response.json({ order: await service.getOrder(order.id) });
     })
   );
 
@@ -1077,7 +1065,7 @@ async function handlePaymentWebhook(
     await service.updatePaymentStatus(updated.orderId, update.status);
     if (update.status === PaymentStatus.COMPLETED) {
       const order = await service.getOrder(updated.orderId);
-      if (order?.status === OrderStatus.PENDING && !order.queuedAt) {
+      if (order?.status === OrderStatus.READY && !order.queuedAt) {
         await service.enqueueOrder(order.id).catch((error) => {
           if (!(error instanceof ConflictError)) throw error;
         });
@@ -1103,7 +1091,7 @@ async function handlePaymentWebhook(
 }
 
 const store = createDispatchStore(config);
-export const dispatchService = new BatchProcessingService(3, store, {
+export const dispatchService = new BatchProcessingService(config.dispatchBatchSize, store, {
   dispatchDriverIds: config.dispatchDriverIds,
   driverSharePercent: config.driverSharePercent
 });

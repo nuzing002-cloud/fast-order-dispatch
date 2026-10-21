@@ -63,6 +63,12 @@ async function deliver(orderId: string): Promise<void> {
   }
 }
 
+async function markReady(orderId: string): Promise<{ status: string; assignedDriverId?: string }> {
+  const response = await patch(`/orders/${orderId}/status`, { status: 'READY' });
+  expect(response.status).toBe(200);
+  return (await response.json()).order;
+}
+
 beforeAll(async () => {
   const registration = await post('/drivers', makeDriver());
   expect(registration.status).toBe(201);
@@ -71,7 +77,8 @@ beforeAll(async () => {
 test('accrues earnings on delivery and pays them out once', async () => {
   const created = await post('/orders', makeOrder('earn-order'));
   expect(created.status).toBe(201);
-  expect((await created.json()).assignedToTargetDriver).toBe(true);
+  expect((await created.json()).order.status).toBe('PENDING');
+  expect((await markReady('earn-order')).assignedDriverId).toBe(driverId);
 
   await deliver('earn-order');
 
@@ -120,7 +127,8 @@ test('registers push subscriptions and notifies the driver on assignment', async
 
   const created = await post('/orders', makeOrder('push-order'));
   expect(created.status).toBe(201);
-  expect((await created.json()).assignedToTargetDriver).toBe(true);
+  expect((await created.json()).order.status).toBe('PENDING');
+  expect((await markReady('push-order')).assignedDriverId).toBe(driverId);
 
   for (let attempt = 0; attempt < 50 && pushes.length === 0; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -139,12 +147,13 @@ test('registers push subscriptions and notifies the driver on assignment', async
 
 test('declines an assigned order and returns it to the queue', async () => {
   const created = await post('/orders', makeOrder('decline-order'));
-  expect((await created.json()).assignedToTargetDriver).toBe(true);
+  expect((await created.json()).order.status).toBe('PENDING');
+  await markReady('decline-order');
 
   const declined = await post('/orders/decline-order/decline', { driverId });
   expect(declined.status).toBe(200);
   const body = await declined.json();
-  expect(body.order.status).toBe('PENDING');
+  expect(body.order.status).toBe('READY');
   expect(body.order.assignedDriverId).toBeUndefined();
   expect(body.order.declinedDriverIds).toContain(driverId);
   expect(body.driver.isAvailable).toBe(true);
@@ -169,6 +178,7 @@ test('pauses new assignments until the driver opts back in', async () => {
   const queuedBody = await queued.json();
   expect(queuedBody.assignedToTargetDriver).toBe(false);
   expect(queuedBody.order.status).toBe('PENDING');
+  expect((await markReady('paused-order')).status).toBe('READY');
 
   const resumed = await patch(`/drivers/${driverId}`, { acceptsNewOrders: true });
   expect((await resumed.json()).driver.acceptsNewOrders).toBe(true);

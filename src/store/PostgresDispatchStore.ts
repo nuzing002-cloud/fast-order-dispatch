@@ -176,7 +176,7 @@ export class PostgresDispatchStore implements DispatchStore {
   async getPendingOrders(): Promise<Order[]> {
     const rows = await this.database.query(
       `SELECT data FROM orders
-       WHERE status = 'PENDING' AND queued_at IS NOT NULL
+       WHERE status = 'READY' AND queued_at IS NOT NULL
        ORDER BY queued_at ASC, created_at ASC, id ASC`
     );
     return rows.map((row) => parseJson<Order>(row.data));
@@ -185,7 +185,7 @@ export class PostgresDispatchStore implements DispatchStore {
   async getQueueSize(): Promise<number> {
     const rows = await this.database.query<{ total: number }>(
       `SELECT count(*)::int AS total FROM orders
-       WHERE status = 'PENDING' AND queued_at IS NOT NULL`
+       WHERE status = 'READY' AND queued_at IS NOT NULL`
     );
     return Number(rows[0]?.total ?? 0);
   }
@@ -346,7 +346,7 @@ export class PostgresDispatchStore implements DispatchStore {
           WHERE status = 'DELIVERED' AND payment_status <> 'REFUNDED'
         ), 0) AS total_revenue,
         (SELECT count(*)::int FROM drivers WHERE status = 'AVAILABLE' AND is_available) AS active_drivers,
-        (SELECT count(*)::int FROM orders WHERE status = 'PENDING' AND queued_at IS NOT NULL) AS pending_orders
+        (SELECT count(*)::int FROM orders WHERE status = 'READY' AND queued_at IS NOT NULL) AS pending_orders
     `);
     const row = rows[0] ?? {};
     return {
@@ -482,7 +482,7 @@ class PostgresDispatchTransaction implements DispatchTransaction {
   async lockQueuedOrders(limit: number): Promise<Order[]> {
     const rows = await this.tx.query(
       `SELECT data FROM orders
-       WHERE status = 'PENDING' AND queued_at IS NOT NULL
+       WHERE status = 'READY' AND queued_at IS NOT NULL
        ORDER BY queued_at ASC, created_at ASC, id ASC
        LIMIT $1
        FOR UPDATE SKIP LOCKED`,
@@ -530,11 +530,10 @@ class PostgresDispatchTransaction implements DispatchTransaction {
     const rows = await this.tx.query(
       `SELECT data FROM drivers
        WHERE id = ANY($1::text[])
-         AND status = $2
-         AND is_available = true
+         AND status = ANY($2::text[])
        ORDER BY id
        FOR UPDATE SKIP LOCKED`,
-      [driverIds, DriverStatus.AVAILABLE]
+      [driverIds, [DriverStatus.AVAILABLE, DriverStatus.BUSY]]
     );
     return rows.map((row) => parseJson<Driver>(row.data));
   }

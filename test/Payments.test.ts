@@ -45,6 +45,7 @@ function patch(path: string, body: unknown): Promise<Response> {
 test('stores charges, refunds delivered orders, and excludes them from revenue', async () => {
   const created = await post('/orders', makeOrder('pay1', 13.76, 100.51, 100));
   expect(created.status).toBe(201);
+  expect((await patch('/orders/pay1/status', { status: 'READY' })).status).toBe(200);
 
   const payments = await (await fetch(`${baseUrl}/orders/pay1/payments`)).json();
   expect(payments.payments).toHaveLength(1);

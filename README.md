@@ -4,7 +4,9 @@ Order dispatch service with batch processing, payment coordination, lifecycle tr
 
 ## Features
 
-- Batches up to 3 orders and assigns them to the configured driver pool (default driver ID `1388246780`)
+- Batches up to 4 orders and assigns them to the configured driver pool (default driver ID `1388246780`)
+- Dispatches only once the restaurant marks an order `READY`, nearest orders first
+- Keeps feeding queued orders to a busy driver that still has free capacity, so work continues before the last delivery finishes
 - Nearest-neighbour route optimization using Haversine distance
 - Delivery ETA = travel time + longest restaurant preparation time in the batch
 - Full order lifecycle with guarded transitions and automatic driver release
@@ -83,6 +85,7 @@ The console is an internal operations tool: it has no user accounts or server-si
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in milliseconds |
 | `TRUST_PROXY` | unset | Set to `1`/`true` behind a reverse proxy |
 | `DISPATCH_DRIVER_IDS` | `1388246780` | Comma-separated drivers eligible for dispatch |
+| `DISPATCH_BATCH_SIZE` | `4` | Maximum orders per dispatch batch (1-50) |
 | `DRIVER_SHARE_PERCENT` | `80` | Share of the delivery fee credited to the driver (0-100) |
 | `VAPID_PUBLIC_KEY` | unset | Web Push public key; required in production |
 | `VAPID_PRIVATE_KEY` | unset | Web Push private key; required in production |
@@ -187,7 +190,7 @@ curl -X POST http://127.0.0.1:3000/drivers \
     "licensePlate": "TARGET",
     "currentLatitude": 13.7563,
     "currentLongitude": 100.5018,
-    "maxOrdersPerBatch": 3
+    "maxOrdersPerBatch": 4
   }'
 ```
 
@@ -232,19 +235,20 @@ curl -X POST http://127.0.0.1:3000/orders \
   }'
 ```
 
-A successful call returns `201` with the order, payment transaction, batch, `assignedDriverId`, `assignedToTargetDriver`, and queue size. If no eligible driver is available or has capacity, the order stays in `GET /orders/pending`.
+A successful call returns `201` with the order, payment transaction, and queue size. New orders stay `PENDING` until the restaurant marks them `READY`; only then are they queued and dispatched.
 
 ### Order lifecycle
 
 ```text
-PENDING ──► ASSIGNED ──► PICKED_UP ──► IN_DELIVERY ──► DELIVERED
-   │            │             │              │
-   ├──► CANCELLED / FAILED ◄──┴──────────────┘
+PENDING ──► READY ──► ASSIGNED ──► PICKED_UP ──► IN_DELIVERY ──► DELIVERED
+   │          │           │             │              │
+   ├──► CANCELLED / FAILED ◄┴────────────┴──────────────┘
 ```
 
 | From | To |
 | --- | --- |
-| `PENDING` | `CANCELLED`, `FAILED` |
+| `PENDING` | `READY`, `CANCELLED`, `FAILED` |
+| `READY` | `CANCELLED`, `FAILED` (dispatch assigns automatically) |
 | `ASSIGNED` | `PICKED_UP`, `CANCELLED`, `FAILED` |
 | `PICKED_UP` | `IN_DELIVERY`, `CANCELLED`, `FAILED` |
 | `IN_DELIVERY` | `DELIVERED`, `FAILED` |
@@ -256,7 +260,7 @@ curl -X PATCH http://127.0.0.1:3000/orders/<id>/status \
   -d '{"status":"PICKED_UP"}'
 ```
 
-Invalid transitions return `409`. When all orders assigned to a driver reach a terminal state, the driver becomes `AVAILABLE` again and can receive the next batch. Delivered orders increase `totalDeliveries` and a batch gets `completedAt`.
+Invalid transitions return `409`. A `PENDING` order becomes dispatchable with `PATCH /orders/<id>/status` and `{"status":"READY"}`. While a driver still has free capacity, the dispatcher keeps assigning the nearest queued orders before the last delivery finishes. When all assigned orders reach a terminal state, the driver becomes `AVAILABLE` again. Delivered orders increase `totalDeliveries` and a batch gets `completedAt`.
 
 ### Idempotency
 
@@ -468,7 +472,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec -T app
 
 ## Auto dispatch
 
-Set `AUTO_PROCESS_INTERVAL_MS=1000` to run a dispatch cycle on an interval instead of relying on `POST /orders` or `POST /dispatch/process`.
+Set `AUTO_PROCESS_INTERVAL_MS=500` to run a dispatch cycle twice per second. `PATCH /orders/<id>/status` with `READY` also triggers an immediate dispatch, and `POST /dispatch/process` remains available for manual runs.
 
 ## Scripts
 

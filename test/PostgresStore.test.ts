@@ -27,7 +27,7 @@ describe('PostgreSQL dispatch store', () => {
       await service.registerDriver(makeDriver());
       await service.addOrder(makeOrder('o1', 13.76, 100.51, 100));
       await service.addOrder(makeOrder('o2', 13.77, 100.52, 50));
-      await service.addOrder(makeOrder('o3'));
+      await service.addOrder(makeOrder('o3', 13.9, 100.7));
 
       const batch = await service.processBatch();
       expect(batch?.orderIds).toHaveLength(2);
@@ -138,7 +138,7 @@ describe('PostgreSQL dispatch store', () => {
       expect((await restored.getOrder('o1'))?.status).toBe(OrderStatus.ASSIGNED);
       expect((await restored.getOrder('o1'))?.createdAt).toBeInstanceOf(Date);
       expect((await restored.getOrder('o1'))?.assignedAt).toBeInstanceOf(Date);
-      expect((await restored.getOrder('o3'))?.status).toBe(OrderStatus.PENDING);
+      expect((await restored.getOrder('o3'))?.status).toBe(OrderStatus.READY);
       expect(await restored.getQueueSize()).toBe(1);
       const [driver] = await restored.getDrivers();
       expect(driver?.assignedOrders).toEqual(assignedOrderIds);
@@ -265,7 +265,7 @@ describe('PostgreSQL dispatch store', () => {
 
       await expect(
         service.updateOrderStatus('o1', OrderStatus.DELIVERED)
-      ).rejects.toThrow('cannot transition from PENDING to DELIVERED');
+      ).rejects.toThrow('cannot transition from READY to DELIVERED');
       await expect(
         service.updateDriverDetails(makeDriver().id, { rating: 4.5 })
       ).resolves.toBeDefined();

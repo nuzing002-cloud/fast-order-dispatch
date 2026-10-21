@@ -65,7 +65,8 @@ const TERMINAL_STATUSES: ReadonlySet<OrderStatus> = new Set([
 ]);
 
 const ALLOWED_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
-  [OrderStatus.PENDING]: [OrderStatus.CANCELLED, OrderStatus.FAILED],
+  [OrderStatus.PENDING]: [OrderStatus.READY, OrderStatus.CANCELLED, OrderStatus.FAILED],
+  [OrderStatus.READY]: [OrderStatus.CANCELLED, OrderStatus.FAILED],
   [OrderStatus.ASSIGNED]: [OrderStatus.PICKED_UP, OrderStatus.CANCELLED, OrderStatus.FAILED],
   [OrderStatus.PICKED_UP]: [OrderStatus.IN_DELIVERY, OrderStatus.CANCELLED, OrderStatus.FAILED],
   [OrderStatus.IN_DELIVERY]: [OrderStatus.DELIVERED, OrderStatus.FAILED],
@@ -97,7 +98,7 @@ export class BatchProcessingService extends EventEmitter {
   private isProcessing = false;
 
   constructor(
-    batchSize: number = 3,
+    batchSize: number = 4,
     store: DispatchStore = new MemoryDispatchStore(),
     options: BatchProcessingOptions = {}
   ) {
@@ -136,7 +137,8 @@ export class BatchProcessingService extends EventEmitter {
     const now = new Date();
     const stored = cloneOrder({
       ...order,
-      status: OrderStatus.PENDING,
+      status: enqueue ? OrderStatus.READY : OrderStatus.PENDING,
+      readyAt: enqueue ? now : undefined,
       queuedAt: enqueue ? now : undefined,
       updatedAt: now
     });
@@ -149,11 +151,18 @@ export class BatchProcessingService extends EventEmitter {
     const result = await this.store.transaction(async (tx) => {
       const order = await tx.getOrder(orderId, true);
       if (!order) throw new NotFoundError(`Order ${orderId} was not found`);
-      if (order.status !== OrderStatus.PENDING) {
+      if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.READY) {
         throw new ConflictError(`Order ${orderId} is ${order.status} and cannot be queued`);
       }
       if (order.queuedAt) return { changed: false, order };
-      const updated = cloneOrder({ ...order, queuedAt: new Date(), updatedAt: new Date() });
+      const now = new Date();
+      const updated = cloneOrder({
+        ...order,
+        status: OrderStatus.READY,
+        readyAt: order.readyAt ?? now,
+        queuedAt: now,
+        updatedAt: now
+      });
       await tx.updateOrder(updated);
       return { changed: true, order: updated };
     });
@@ -168,7 +177,9 @@ export class BatchProcessingService extends EventEmitter {
 
     try {
       const plan = await this.store.transaction<BatchPlan | null>(async (tx) => {
-        const queuedOrders = await tx.lockQueuedOrders(this.batchSize);
+        const queuedOrders = await tx.lockQueuedOrders(
+          Math.max(this.batchSize * 25, 100)
+        );
         if (queuedOrders.length === 0) return null;
 
         const drivers = (await tx.lockAvailableDrivers([...this.dispatchDriverIds])).filter(
@@ -267,7 +278,10 @@ export class BatchProcessingService extends EventEmitter {
         ...current,
         status: nextStatus,
         updatedAt: now,
-        queuedAt: previousStatus === OrderStatus.PENDING ? undefined : current.queuedAt,
+        readyAt:
+          nextStatus === OrderStatus.READY ? current.readyAt ?? now : current.readyAt,
+        queuedAt:
+          nextStatus === OrderStatus.READY ? current.queuedAt ?? now : undefined,
         pickedUpAt:
           nextStatus === OrderStatus.PICKED_UP ? now : current.pickedUpAt,
         deliveredAt:
@@ -382,7 +396,8 @@ export class BatchProcessingService extends EventEmitter {
 
       const updatedOrder = cloneOrder({
         ...order,
-        status: OrderStatus.PENDING,
+        status: OrderStatus.READY,
+        readyAt: order.readyAt ?? now,
         queuedAt: now,
         assignedDriverId: undefined,
         assignedAt: undefined,
@@ -824,7 +839,18 @@ export class BatchProcessingService extends EventEmitter {
 
       const orders = queuedOrders
         .filter((order) => !(order.declinedDriverIds ?? []).includes(driver.id))
-        .slice(0, capacity);
+        .map((order) => ({
+          order,
+          distance: DistanceCalculator.calculate(
+            driver.currentLatitude,
+            driver.currentLongitude,
+            order.customer.latitude,
+            order.customer.longitude
+          )
+        }))
+        .sort((left, right) => left.distance - right.distance)
+        .slice(0, capacity)
+        .map((entry) => entry.order);
       const firstOrder = orders[0];
       if (!firstOrder) continue;
 

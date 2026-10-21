@@ -72,6 +72,7 @@ test('validates driver updates', async () => {
 
 test('blocks manual status changes while the driver has active orders', async () => {
   expect((await post('/orders', makeOrder('o1'))).status).toBe(201);
+  expect((await patch('/orders/o1/status', { status: 'READY' })).status).toBe(200);
 
   const blocked = await patch('/drivers/1388246780', { status: 'OFFLINE' });
   expect(blocked.status).toBe(409);
@@ -101,9 +102,16 @@ describe('multi-driver dispatch', () => {
       body: JSON.stringify(order)
     });
     expect(response.status).toBe(201);
-    const body = await response.json();
-    expect(body.assignedDriverId).toBe('driver-2');
-    expect(body.assignedToTargetDriver).toBe(true);
+    expect((await response.json()).order.status).toBe('PENDING');
+
+    const ready = await fetch(`${url}/orders/near-driver-2/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'READY' })
+    });
+    expect(ready.status).toBe(200);
+    const body = await ready.json();
+    expect(body.order.assignedDriverId).toBe('driver-2');
 
     await new Promise<void>((resolve, reject) =>
       multiServer.close((error) => (error ? reject(error) : resolve()))

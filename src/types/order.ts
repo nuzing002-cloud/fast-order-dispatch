@@ -3,7 +3,10 @@
  */
 
 export enum OrderStatus {
+  /** Order was paid and is waiting for the restaurant to mark it ready. */
   PENDING = 'PENDING',
+  /** Restaurant confirmed the food is ready; the order is queued for dispatch. */
+  READY = 'READY',
   ASSIGNED = 'ASSIGNED',
   PICKED_UP = 'PICKED_UP',
   IN_DELIVERY = 'IN_DELIVERY',
@@ -67,6 +70,7 @@ export interface Order {
   updatedAt: Date;
   assignedDriverId?: string;
   assignedAt?: Date;
+  readyAt?: Date;
   pickedUpAt?: Date;
   deliveredAt?: Date;
   estimatedDeliveryTime?: Date;

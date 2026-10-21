@@ -234,6 +234,7 @@ export const openApiSpec = {
                     type: 'string',
                     enum: [
                       'PENDING',
+                      'READY',
                       'ASSIGNED',
                       'PICKED_UP',
                       'IN_DELIVERY',
@@ -271,7 +272,7 @@ export const openApiSpec = {
           }
         },
         responses: {
-          '200': { description: 'Order returned to PENDING' },
+          '200': { description: 'Order returned to the READY dispatch queue' },
           '404': { description: 'Not found' },
           '409': { description: 'Order is not ASSIGNED' }
         }

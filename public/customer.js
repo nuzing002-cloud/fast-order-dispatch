@@ -183,6 +183,7 @@
         const state = position < index ? 'done' : position === index ? 'current' : '';
         const stamps = {
           PENDING: order.createdAt,
+          READY: order.readyAt,
           ASSIGNED: order.assignedAt,
           PICKED_UP: order.pickedUpAt,
           IN_DELIVERY: order.pickedUpAt,

@@ -79,6 +79,13 @@ describe('realtime events', () => {
     });
     expect(response.status).toBe(201);
 
+    const ready = await fetch(`${baseUrl}/orders/o1/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'READY' })
+    });
+    expect(ready.status).toBe(200);
+
     const created = await createdEvent;
     const assigned = await assignedEvent;
 
