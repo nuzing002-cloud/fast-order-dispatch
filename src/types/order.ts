@@ -59,6 +59,8 @@ export interface Order {
   /** Sum of items before the delivery fee. */
   status: OrderStatus;
   paymentStatus: PaymentStatus;
+  /** Drivers who declined this order; dispatch will not offer it to them again. */
+  declinedDriverIds?: string[];
   /** Present while the order is waiting in the dispatch queue. */
   queuedAt?: Date;
   createdAt: Date;
@@ -92,6 +94,8 @@ export interface Driver {
   totalDeliveries: number;
   rating: number;
   isAvailable: boolean;
+  /** When false the driver keeps finishing current work but receives no new batches. */
+  acceptsNewOrders?: boolean;
   maxOrdersPerBatch: number;
   lastLocationUpdate?: Date;
 }
@@ -127,6 +131,51 @@ export interface PaymentTransaction {
   createdAt: Date;
   processedAt?: Date;
   notes?: string;
+}
+
+export type EarningStatus = 'PENDING' | 'PAID';
+
+export interface DriverEarning {
+  id: string;
+  driverId: string;
+  orderId: string;
+  amount: number;
+  currency: string;
+  status: EarningStatus;
+  createdAt: Date;
+  paidAt?: Date;
+  payoutId?: string;
+}
+
+export interface Payout {
+  id: string;
+  driverId: string;
+  amount: number;
+  currency: string;
+  status: 'PAID';
+  method: string;
+  reference?: string;
+  note?: string;
+  earningIds: string[];
+  createdAt: Date;
+  paidAt: Date;
+}
+
+export interface DriverEarningsSummary {
+  driverId: string;
+  currency: string;
+  pendingAmount: number;
+  paidAmount: number;
+  totalAmount: number;
+  earnings: DriverEarning[];
+  payouts: Payout[];
+}
+
+export interface PushSubscriptionRecord {
+  endpoint: string;
+  driverId: string;
+  keys: { p256dh: string; auth: string };
+  createdAt: Date;
 }
 
 export interface AuditLogEntry {

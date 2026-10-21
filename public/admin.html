@@ -121,6 +121,47 @@
         </section>
       </div>
 
+      <div class="split section">
+        <section class="card">
+          <h2>จ่ายเงินคนขับ</h2>
+          <div class="form-grid">
+            <label>คนขับ<select id="payoutDriver"></select></label>
+            <label>ช่องทาง<input id="payoutMethod" value="promptpay" /></label>
+            <label>เลขอ้างอิง<input id="payoutReference" placeholder="เช่น เบอร์พร้อมเพย์" /></label>
+            <label>หมายเหตุ<input id="payoutNote" placeholder="ถ้ามี" /></label>
+          </div>
+          <p class="muted small" id="payoutPending">-</p>
+          <button id="payoutButton" class="btn-primary wide">บันทึกการจ่ายเงิน</button>
+          <p class="muted small" style="margin-bottom: 0">
+            ระบบจะปิดยอดรายได้ที่ค้างอยู่ทั้งหมดของคนขับที่เลือก แล้วบันทึกว่าโอนแล้ว
+          </p>
+        </section>
+
+        <section>
+          <div class="section-head">
+            <h2>ประวัติการจ่ายเงิน</h2>
+            <span class="muted small" id="payoutCount">-</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Payout</th>
+                  <th>คนขับ</th>
+                  <th>ยอด</th>
+                  <th>ช่องทาง</th>
+                  <th>อ้างอิง</th>
+                  <th>เวลา</th>
+                </tr>
+              </thead>
+              <tbody id="payoutsBody">
+                <tr><td colspan="6" class="empty">กำลังโหลด...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
       <section class="section">
         <div class="section-head">
           <h2>Batch ล่าสุด</h2>

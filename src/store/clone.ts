@@ -2,8 +2,11 @@ import {
   AuditLogEntry,
   BatchAssignment,
   Driver,
+  DriverEarning,
   Order,
-  PaymentTransaction
+  PaymentTransaction,
+  Payout,
+  PushSubscriptionRecord
 } from '../types/order';
 
 export function cloneOrder(order: Order): Order {
@@ -12,6 +15,7 @@ export function cloneOrder(order: Order): Order {
     restaurant: { ...order.restaurant },
     customer: { ...order.customer },
     items: order.items.map((item) => ({ ...item })),
+    declinedDriverIds: order.declinedDriverIds ? [...order.declinedDriverIds] : undefined,
     queuedAt: order.queuedAt ? new Date(order.queuedAt) : undefined,
     createdAt: new Date(order.createdAt),
     updatedAt: new Date(order.updatedAt),
@@ -28,6 +32,7 @@ export function cloneDriver(driver: Driver): Driver {
   return {
     ...driver,
     assignedOrders: [...driver.assignedOrders],
+    acceptsNewOrders: driver.acceptsNewOrders !== false,
     lastLocationUpdate: driver.lastLocationUpdate
       ? new Date(driver.lastLocationUpdate)
       : undefined
@@ -50,6 +55,33 @@ export function clonePayment(payment: PaymentTransaction): PaymentTransaction {
     ...payment,
     createdAt: new Date(payment.createdAt),
     processedAt: payment.processedAt ? new Date(payment.processedAt) : undefined
+  };
+}
+
+export function cloneEarning(earning: DriverEarning): DriverEarning {
+  return {
+    ...earning,
+    createdAt: new Date(earning.createdAt),
+    paidAt: earning.paidAt ? new Date(earning.paidAt) : undefined
+  };
+}
+
+export function clonePayout(payout: Payout): Payout {
+  return {
+    ...payout,
+    earningIds: [...payout.earningIds],
+    createdAt: new Date(payout.createdAt),
+    paidAt: new Date(payout.paidAt)
+  };
+}
+
+export function clonePushSubscription(
+  subscription: PushSubscriptionRecord
+): PushSubscriptionRecord {
+  return {
+    ...subscription,
+    keys: { ...subscription.keys },
+    createdAt: new Date(subscription.createdAt)
   };
 }
 

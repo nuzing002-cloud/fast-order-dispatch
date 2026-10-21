@@ -8,24 +8,37 @@ import {
   OrderPage,
   OrderPageOptions
 } from '../store/DispatchStore';
-import { cloneBatch, cloneDriver, cloneOrder, clonePayment } from '../store/clone';
+import {
+  cloneBatch,
+  cloneDriver,
+  cloneEarning,
+  cloneOrder,
+  clonePayment,
+  clonePayout
+} from '../store/clone';
 import {
   AuditLogEntry,
   BatchAssignment,
   Driver,
+  DriverEarning,
+  DriverEarningsSummary,
   DriverStatus,
   Order,
   OrderStatus,
   PaymentStatus,
   PaymentTransaction,
+  Payout,
   SystemMetrics
 } from '../types/order';
 import { DistanceCalculator } from '../utils/DistanceCalculator';
 
 export const DISPATCH_DRIVER_ID = '1388246780';
+export const DEFAULT_CURRENCY = 'THB';
 
 export interface BatchProcessingOptions {
   dispatchDriverIds?: string[];
+  /** Percentage of the delivery fee paid to the driver. */
+  driverSharePercent?: number;
 }
 
 export interface DriverPatch {
@@ -33,8 +46,16 @@ export interface DriverPatch {
   currentLongitude?: number;
   status?: DriverStatus;
   isAvailable?: boolean;
+  acceptsNewOrders?: boolean;
   maxOrdersPerBatch?: number;
   rating?: number;
+}
+
+export interface CreatePayoutInput {
+  driverId: string;
+  method?: string;
+  reference?: string;
+  note?: string;
 }
 
 const TERMINAL_STATUSES: ReadonlySet<OrderStatus> = new Set([
@@ -63,6 +84,7 @@ interface StatusPlan {
   order: Order;
   previousStatus: OrderStatus;
   driver?: Driver;
+  earning?: DriverEarning;
   completedBatches: BatchAssignment[];
 }
 
@@ -70,6 +92,7 @@ export class BatchProcessingService extends EventEmitter {
   private readonly batchSize: number;
   private readonly store: DispatchStore;
   private readonly dispatchDriverIds: Set<string>;
+  private readonly driverSharePercent: number;
   private processingInterval: NodeJS.Timeout | null = null;
   private isProcessing = false;
 
@@ -82,8 +105,13 @@ export class BatchProcessingService extends EventEmitter {
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50) {
       throw new ValidationError('Batch size must be an integer between 1 and 50');
     }
+    const share = options.driverSharePercent ?? 80;
+    if (!Number.isFinite(share) || share < 0 || share > 100) {
+      throw new ValidationError('Driver share percent must be between 0 and 100');
+    }
     this.batchSize = batchSize;
     this.store = store;
+    this.driverSharePercent = share;
     this.dispatchDriverIds = new Set(
       options.dispatchDriverIds && options.dispatchDriverIds.length > 0
         ? options.dispatchDriverIds
@@ -143,31 +171,14 @@ export class BatchProcessingService extends EventEmitter {
         const queuedOrders = await tx.lockQueuedOrders(this.batchSize);
         if (queuedOrders.length === 0) return null;
 
-        const drivers = await tx.lockAvailableDrivers([...this.dispatchDriverIds]);
+        const drivers = (await tx.lockAvailableDrivers([...this.dispatchDriverIds])).filter(
+          (candidate) => candidate.acceptsNewOrders !== false
+        );
         if (drivers.length === 0) return null;
 
-        let batchOrders = queuedOrders;
-        let driver = this.selectDriver(drivers, batchOrders);
-
-        if (!driver) {
-          const availableCapacity = drivers.reduce(
-            (capacity, candidate) =>
-              Math.max(
-                capacity,
-                candidate.maxOrdersPerBatch - candidate.assignedOrders.length
-              ),
-            0
-          );
-          if (availableCapacity > 0) {
-            batchOrders = queuedOrders.slice(
-              0,
-              Math.min(this.batchSize, availableCapacity)
-            );
-            driver = this.selectDriver(drivers, batchOrders);
-          }
-        }
-
-        if (!driver) return null;
+        const planned = this.planBatch(drivers, queuedOrders);
+        if (!planned) return null;
+        const { driver, orders: batchOrders } = planned;
 
         const optimizedSequence = this.optimizeDeliverySequence(batchOrders, driver);
         const totalDistanceKm = this.calculateRouteDistance(
@@ -266,7 +277,26 @@ export class BatchProcessingService extends EventEmitter {
       await tx.updateOrder(order);
 
       let driver: Driver | undefined;
+      let earning: DriverEarning | undefined;
       const completedBatches: BatchAssignment[] = [];
+
+      if (nextStatus === OrderStatus.DELIVERED && order.assignedDriverId) {
+        const existing = await tx.getEarningByOrder(order.id, true);
+        if (!existing) {
+          earning = {
+            id: `earn_${uuidv4()}`,
+            driverId: order.assignedDriverId,
+            orderId: order.id,
+            amount: roundMoney((order.deliveryFee * this.driverSharePercent) / 100),
+            currency: DEFAULT_CURRENCY,
+            status: 'PENDING',
+            createdAt: now
+          };
+          await tx.insertEarning(earning);
+        } else {
+          earning = existing;
+        }
+      }
 
       if (TERMINAL_STATUSES.has(nextStatus) && order.assignedDriverId) {
         const storedDriver = await tx.getDriver(order.assignedDriverId, true);
@@ -311,7 +341,7 @@ export class BatchProcessingService extends EventEmitter {
         }
       }
 
-      return { order, previousStatus, driver, completedBatches };
+      return { order, previousStatus, driver, earning, completedBatches };
     });
 
     if (plan.previousStatus !== plan.order.status) {
@@ -321,11 +351,97 @@ export class BatchProcessingService extends EventEmitter {
       });
     }
     if (plan.driver) this.emit('driver:updated', cloneDriver(plan.driver));
+    if (plan.earning) this.emit('earning:created', cloneEarning(plan.earning));
     for (const batch of plan.completedBatches) {
       this.emit('batch:completed', cloneBatch(batch));
     }
 
     return cloneOrder(plan.order);
+  }
+
+  async declineOrder(
+    orderId: string,
+    driverId?: string
+  ): Promise<{ order: Order; driver?: Driver }> {
+    const now = new Date();
+    const result = await this.store.transaction(async (tx) => {
+      const order = await tx.getOrder(orderId, true);
+      if (!order) throw new NotFoundError(`Order ${orderId} was not found`);
+      if (order.status !== OrderStatus.ASSIGNED) {
+        throw new ConflictError(
+          `Order ${orderId} is ${order.status} and can no longer be declined`
+        );
+      }
+      if (driverId !== undefined && order.assignedDriverId !== driverId) {
+        throw new ConflictError(`Order ${orderId} is not assigned to driver ${driverId}`);
+      }
+      const assignedDriverId = order.assignedDriverId;
+      if (!assignedDriverId) {
+        throw new ConflictError(`Order ${orderId} has no assigned driver`);
+      }
+
+      const updatedOrder = cloneOrder({
+        ...order,
+        status: OrderStatus.PENDING,
+        queuedAt: now,
+        assignedDriverId: undefined,
+        assignedAt: undefined,
+        estimatedDeliveryTime: undefined,
+        declinedDriverIds: [
+          ...new Set([...(order.declinedDriverIds ?? []), assignedDriverId])
+        ],
+        updatedAt: now
+      });
+      await tx.updateOrder(updatedOrder);
+
+      const storedDriver = await tx.getDriver(assignedDriverId, true);
+      let updatedDriver: Driver | undefined;
+      if (storedDriver) {
+        updatedDriver = cloneDriver({
+          ...storedDriver,
+          assignedOrders: storedDriver.assignedOrders.filter(
+            (candidate) => candidate !== order.id
+          ),
+          lastLocationUpdate: now
+        });
+        const activeOrders = await tx.getOrdersByIds(updatedDriver.assignedOrders);
+        const hasActiveOrders = activeOrders.some(
+          (candidate) => !TERMINAL_STATUSES.has(candidate.status)
+        );
+        if (!hasActiveOrders) {
+          updatedDriver.status = DriverStatus.AVAILABLE;
+          updatedDriver.isAvailable = true;
+        }
+        await tx.updateDriver(updatedDriver);
+      }
+
+      for (const batch of await tx.listBatchesForOrder(order.id, true)) {
+        if (batch.completedAt) continue;
+        const orderIds = batch.orderIds.filter((candidate) => candidate !== order.id);
+        await tx.updateBatch(
+          cloneBatch({
+            ...batch,
+            orderIds,
+            deliverySequence: batch.deliverySequence.filter(
+              (candidate) => candidate !== order.id
+            ),
+            totalRevenue: roundMoney(
+              Math.max(0, batch.totalRevenue - order.totalAmount)
+            ),
+            completedAt: orderIds.length === 0 ? now : batch.completedAt
+          })
+        );
+      }
+
+      return { order: updatedOrder, driver: updatedDriver };
+    });
+
+    this.emit('order:status', {
+      previousStatus: OrderStatus.ASSIGNED,
+      order: cloneOrder(result.order)
+    });
+    if (result.driver) this.emit('driver:updated', cloneDriver(result.driver));
+    return { order: cloneOrder(result.order), driver: result.driver ? cloneDriver(result.driver) : undefined };
   }
 
   async updatePaymentStatus(orderId: string, status: PaymentStatus): Promise<Order> {
@@ -367,6 +483,82 @@ export class BatchProcessingService extends EventEmitter {
     providerTransactionId: string
   ): Promise<PaymentTransaction | undefined> {
     return this.store.findPaymentByProviderTransactionId(providerTransactionId);
+  }
+
+  async getEarningsForDriver(driverId: string): Promise<DriverEarning[]> {
+    return this.store.getEarningsForDriver(driverId);
+  }
+
+  async getDriverEarnings(driverId: string): Promise<DriverEarningsSummary> {
+    const driver = await this.store.getDriver(driverId);
+    if (!driver) throw new NotFoundError(`Driver ${driverId} was not found`);
+    const [earnings, payouts] = await Promise.all([
+      this.store.getEarningsForDriver(driverId),
+      this.store.getPayouts(driverId)
+    ]);
+    const pendingAmount = roundMoney(
+      earnings
+        .filter((earning) => earning.status === 'PENDING')
+        .reduce((sum, earning) => sum + earning.amount, 0)
+    );
+    const paidAmount = roundMoney(
+      earnings
+        .filter((earning) => earning.status === 'PAID')
+        .reduce((sum, earning) => sum + earning.amount, 0)
+    );
+    return {
+      driverId,
+      currency: DEFAULT_CURRENCY,
+      pendingAmount,
+      paidAmount,
+      totalAmount: roundMoney(pendingAmount + paidAmount),
+      earnings,
+      payouts
+    };
+  }
+
+  async getPayouts(driverId?: string): Promise<Payout[]> {
+    return this.store.getPayouts(driverId);
+  }
+
+  async createPayout(input: CreatePayoutInput): Promise<Payout> {
+    const now = new Date();
+    const payout = await this.store.transaction(async (tx) => {
+      const driver = await tx.getDriver(input.driverId, true);
+      if (!driver) throw new NotFoundError(`Driver ${input.driverId} was not found`);
+      const earnings = await tx.getPendingEarningsForDriver(input.driverId, true);
+      if (earnings.length === 0) {
+        throw new ConflictError(`Driver ${input.driverId} has no pending earnings`);
+      }
+
+      const record: Payout = {
+        id: `payout_${uuidv4()}`,
+        driverId: input.driverId,
+        amount: roundMoney(earnings.reduce((sum, earning) => sum + earning.amount, 0)),
+        currency: DEFAULT_CURRENCY,
+        status: 'PAID',
+        method: input.method ?? 'transfer',
+        reference: input.reference,
+        note: input.note,
+        earningIds: earnings.map((earning) => earning.id),
+        createdAt: now,
+        paidAt: now
+      };
+
+      for (const earning of earnings) {
+        await tx.updateEarning({
+          ...earning,
+          status: 'PAID',
+          paidAt: now,
+          payoutId: record.id
+        });
+      }
+      await tx.insertPayout(record);
+      return record;
+    });
+
+    this.emit('payout:created', clonePayout(payout));
+    return clonePayout(payout);
   }
 
   async recordAudit(
@@ -449,20 +641,21 @@ export class BatchProcessingService extends EventEmitter {
       const hasActiveOrders = assignedOrders.some(
         (order) => !TERMINAL_STATUSES.has(order.status)
       );
-      const changesStatus = patch.status !== undefined || patch.isAvailable !== undefined;
-      if (hasActiveOrders && changesStatus) {
+      if (hasActiveOrders && patch.status !== undefined) {
         throw new ConflictError(
           `Driver ${driverId} has active orders; status can only change after they finish`
+        );
+      }
+      if (hasActiveOrders && patch.isAvailable === true) {
+        throw new ConflictError(
+          `Driver ${driverId} has active orders; availability is restored automatically after delivery`
         );
       }
       if (patch.status === DriverStatus.BUSY) {
         throw new ValidationError('status BUSY is managed by the dispatcher');
       }
-      if (
-        patch.isAvailable === true &&
-        patch.status === undefined &&
-        current.status !== DriverStatus.AVAILABLE
-      ) {
+      const effectiveStatus = patch.status ?? current.status;
+      if (patch.isAvailable === true && effectiveStatus !== DriverStatus.AVAILABLE) {
         throw new ValidationError('isAvailable can only be true when status is AVAILABLE');
       }
 
@@ -473,6 +666,9 @@ export class BatchProcessingService extends EventEmitter {
       }
       if (patch.isAvailable !== undefined) {
         driver.isAvailable = patch.isAvailable;
+      }
+      if (patch.acceptsNewOrders !== undefined) {
+        driver.acceptsNewOrders = patch.acceptsNewOrders;
       }
       if (
         patch.currentLatitude !== undefined &&
@@ -507,7 +703,10 @@ export class BatchProcessingService extends EventEmitter {
 
   async getAvailableDrivers(): Promise<Driver[]> {
     return (await this.getDrivers()).filter(
-      (driver) => driver.isAvailable && driver.status === DriverStatus.AVAILABLE
+      (driver) =>
+        driver.isAvailable &&
+        driver.status === DriverStatus.AVAILABLE &&
+        driver.acceptsNewOrders !== false
     );
   }
 
@@ -608,6 +807,46 @@ export class BatchProcessingService extends EventEmitter {
     );
   }
 
+  private planBatch(
+    drivers: Driver[],
+    queuedOrders: Order[]
+  ): { driver: Driver; orders: Order[] } | undefined {
+    let bestDriver: Driver | undefined;
+    let bestOrders: Order[] = [];
+    let bestDistance = Infinity;
+
+    for (const driver of drivers) {
+      const capacity = Math.min(
+        this.batchSize,
+        driver.maxOrdersPerBatch - driver.assignedOrders.length
+      );
+      if (capacity < 1) continue;
+
+      const orders = queuedOrders
+        .filter((order) => !(order.declinedDriverIds ?? []).includes(driver.id))
+        .slice(0, capacity);
+      const firstOrder = orders[0];
+      if (!firstOrder) continue;
+
+      const distance = DistanceCalculator.calculate(
+        driver.currentLatitude,
+        driver.currentLongitude,
+        firstOrder.customer.latitude,
+        firstOrder.customer.longitude
+      );
+      if (
+        orders.length > bestOrders.length ||
+        (orders.length === bestOrders.length && distance < bestDistance)
+      ) {
+        bestDriver = driver;
+        bestOrders = orders;
+        bestDistance = distance;
+      }
+    }
+
+    return bestDriver ? { driver: bestDriver, orders: bestOrders } : undefined;
+  }
+
   private selectDriver(drivers: Driver[], orders: Order[]): Driver | undefined {
     const availableDrivers = drivers.filter(
       (driver) =>
@@ -664,4 +903,8 @@ export class BatchProcessingService extends EventEmitter {
 
     return totalDistance;
   }
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
 }

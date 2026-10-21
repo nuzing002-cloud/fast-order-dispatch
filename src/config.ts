@@ -20,8 +20,12 @@ export interface AppConfig {
   rateLimitWindowMs: number;
   rateLimitMax: number;
   dispatchDriverIds: string[];
+  driverSharePercent: number;
   trustProxy: boolean;
   idempotencyTtlMs: number;
+  vapidPublicKey?: string;
+  vapidPrivateKey?: string;
+  vapidSubject?: string;
   paymentProvider: PaymentProviderName;
   paymentGatewayUrl?: string;
   paymentGatewayApiKey?: string;
@@ -87,8 +91,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     rateLimitWindowMs,
     rateLimitMax,
     dispatchDriverIds,
+    driverSharePercent: boundedNumber(env.DRIVER_SHARE_PERCENT, 80, 0, 100, 'DRIVER_SHARE_PERCENT'),
     trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',
     idempotencyTtlMs: integer(env.IDEMPOTENCY_TTL_MS, 86_400_000, 1_000, 'IDEMPOTENCY_TTL_MS'),
+    vapidPublicKey: env.VAPID_PUBLIC_KEY?.trim() || undefined,
+    vapidPrivateKey: env.VAPID_PRIVATE_KEY?.trim() || undefined,
+    vapidSubject: env.VAPID_SUBJECT?.trim() || undefined,
     paymentProvider: paymentProvider as PaymentProviderName,
     paymentGatewayUrl,
     paymentGatewayApiKey: env.PAYMENT_GATEWAY_API_KEY?.trim() || undefined,
@@ -202,6 +210,11 @@ function validateProductionConfig(config: AppConfig): void {
   if (!config.redisUrl) {
     throw new ValidationError('REDIS_URL is required when NODE_ENV=production');
   }
+  if (!config.vapidPublicKey || !config.vapidPrivateKey) {
+    throw new ValidationError(
+      'VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required when NODE_ENV=production'
+    );
+  }
 }
 
 function parseDatabaseUrl(value: string | undefined): string | undefined {
@@ -228,6 +241,20 @@ function integer(
   const parsed = value === undefined || value === '' ? fallback : Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum) {
     throw new ValidationError(`${field} must be an integer of at least ${minimum}`);
+  }
+  return parsed;
+}
+
+function boundedNumber(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  field: string
+): number {
+  const parsed = value === undefined || value === '' ? fallback : Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
+    throw new ValidationError(`${field} must be a number between ${minimum} and ${maximum}`);
   }
   return parsed;
 }

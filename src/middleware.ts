@@ -14,6 +14,7 @@ export const PUBLIC_PATHS = new Set([
   '/ready',
   '/openapi.json',
   '/docs',
+  '/push/public-key',
   '/webhooks/payments'
 ]);
 

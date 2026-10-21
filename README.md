@@ -8,6 +8,9 @@ Order dispatch service with batch processing, payment coordination, lifecycle tr
 - Nearest-neighbour route optimization using Haversine distance
 - Delivery ETA = travel time + longest restaurant preparation time in the batch
 - Full order lifecycle with guarded transitions and automatic driver release
+- Driver earnings ledger (delivery fee share), admin payouts, and payout history
+- Drivers can decline an assigned order (returned to the queue) or pause new assignments
+- Web Push notifications for new batches (VAPID, service worker) plus Socket.IO realtime
 - Payments on order creation with retry, refund, and a persisted transaction ledger
 - Pluggable payment providers: mock, generic HTTP gateway, or Stripe PaymentIntents
 - Signed payment webhooks (Stripe or HMAC-SHA256) that reconcile the ledger
@@ -80,6 +83,10 @@ The console is an internal operations tool: it has no user accounts or server-si
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in milliseconds |
 | `TRUST_PROXY` | unset | Set to `1`/`true` behind a reverse proxy |
 | `DISPATCH_DRIVER_IDS` | `1388246780` | Comma-separated drivers eligible for dispatch |
+| `DRIVER_SHARE_PERCENT` | `80` | Share of the delivery fee credited to the driver (0-100) |
+| `VAPID_PUBLIC_KEY` | unset | Web Push public key; required in production |
+| `VAPID_PRIVATE_KEY` | unset | Web Push private key; required in production |
+| `VAPID_SUBJECT` | `mailto:ops@example.com` | VAPID contact subject |
 | `DATABASE_URL` | unset | PostgreSQL connection string; required in production |
 | `DATABASE_SSL` | `false` | Set `true` to require verified TLS; add a private CA with `NODE_EXTRA_CA_CERTS` |
 | `DATABASE_POOL_MAX` | `10` | Maximum PostgreSQL pool size per instance |
@@ -98,7 +105,9 @@ The console is an internal operations tool: it has no user accounts or server-si
 
 Without database configuration all state is kept in memory and is lost on restart (audit entries and idempotency keys included). This mode is intended for tests and throwaway development only. Set `DATABASE_URL` for PostgreSQL, or `PGLITE_DATA_DIR` for persistent local development without a server.
 
-When `NODE_ENV=production`, startup fails fast unless auth keys, explicit CORS origins, a positive rate limit, a non-mock payment provider with a webhook secret, `DATABASE_URL`, and `REDIS_URL` are configured. Production also rejects `PGLITE_DATA_DIR` and the removed `DB_PATH` setting.
+When `NODE_ENV=production`, startup fails fast unless auth keys, explicit CORS origins, a positive rate limit, a non-mock payment provider with a webhook secret, `DATABASE_URL`, `REDIS_URL`, and `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` are configured. Production also rejects `PGLITE_DATA_DIR` and the removed `DB_PATH` setting.
+
+Generate VAPID keys once with `npx web-push generate-vapid-keys` and keep them stable; with no keys in development the server generates an ephemeral pair at startup. Browser push requires a secure context (HTTPS or `localhost`).
 
 ## Authentication
 
@@ -140,7 +149,13 @@ Rate limiting returns `429` with `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `
 | `GET` | `/drivers` | List drivers |
 | `POST` | `/drivers` | Register a driver |
 | `GET` | `/drivers/:id` | Fetch one driver |
-| `PATCH` | `/drivers/:id` | Update location, status, capacity, or rating |
+| `PATCH` | `/drivers/:id` | Update location, status, capacity, rating, or `acceptsNewOrders` |
+| `GET` | `/drivers/:id/earnings` | Earnings summary and payout history |
+| `GET` | `/payouts` | List payouts (admin) |
+| `POST` | `/payouts` | Pay out all pending earnings for a driver (admin) |
+| `GET` | `/push/public-key` | VAPID public key for browser subscriptions |
+| `POST` | `/push/subscribe` | Register a driver's browser push subscription |
+| `POST` | `/push/unsubscribe` | Remove a browser push subscription |
 | `GET` | `/orders` | List orders (`status`, `limit`, `offset`) |
 | `GET` | `/orders/pending` | Orders waiting in the dispatch queue |
 | `GET` | `/orders/:id` | Fetch one order |
@@ -149,6 +164,7 @@ Rate limiting returns `429` with `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `
 | `POST` | `/orders/:id/refund` | Refund a completed payment |
 | `GET` | `/orders/:id/payments` | Payment ledger for an order |
 | `PATCH` | `/orders/:id/status` | Advance the order lifecycle |
+| `POST` | `/orders/:id/decline` | Driver declines an assigned order; it returns to the queue |
 | `POST` | `/dispatch/process` | Run one dispatch cycle manually |
 | `GET` | `/batches` | List batch assignments (`limit`, `offset`) |
 | `GET` | `/metrics` | Dispatch metrics (JSON) |
@@ -347,6 +363,8 @@ The server exposes Socket.IO on the same port. Events:
 | `batch:assigned` | Batch |
 | `batch:completed` | Batch |
 | `driver:updated` | Driver |
+| `earning:created` | Driver earning created on delivery |
+| `payout:created` | Payout recorded by an admin |
 
 ```js
 import { io } from 'socket.io-client';

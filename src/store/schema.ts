@@ -94,6 +94,44 @@ export const MIGRATIONS: Migration[] = [
     sql: `
       ALTER TABLE idempotency ADD COLUMN IF NOT EXISTS claim_token text;
     `
+  },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE IF NOT EXISTS driver_earnings (
+        id text PRIMARY KEY,
+        driver_id text NOT NULL,
+        order_id text NOT NULL UNIQUE,
+        status text NOT NULL,
+        amount numeric NOT NULL,
+        created_at timestamptz NOT NULL,
+        paid_at timestamptz,
+        payout_id text,
+        data jsonb NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS driver_earnings_driver_idx
+        ON driver_earnings (driver_id, status, created_at);
+
+      CREATE TABLE IF NOT EXISTS payouts (
+        id text PRIMARY KEY,
+        driver_id text NOT NULL,
+        status text NOT NULL,
+        amount numeric NOT NULL,
+        created_at timestamptz NOT NULL,
+        paid_at timestamptz,
+        data jsonb NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS payouts_driver_idx ON payouts (driver_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint text PRIMARY KEY,
+        driver_id text NOT NULL,
+        created_at timestamptz NOT NULL,
+        data jsonb NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS push_subscriptions_driver_idx
+        ON push_subscriptions (driver_id);
+    `
   }
 ];
 

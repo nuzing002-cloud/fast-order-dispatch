@@ -8,6 +8,9 @@
   const metricsBox = document.getElementById('metrics');
   const auditBox = document.getElementById('auditList');
   const dispatchInfo = document.getElementById('dispatchInfo');
+  const payoutSelect = document.getElementById('payoutDriver');
+  const payoutsBody = document.getElementById('payoutsBody');
+  const payoutPending = document.getElementById('payoutPending');
 
   let dispatchDriverIds = ['1388246780'];
 
@@ -107,6 +110,18 @@
         driversBody.innerHTML = `<tr><td colspan="6" class="empty">ยังไม่มีคนขับ</td></tr>`;
         return;
       }
+      const previous = payoutSelect.value;
+      payoutSelect.innerHTML = data.drivers
+        .map(
+          (driver) =>
+            `<option value="${F.escapeHtml(driver.id)}">${F.escapeHtml(driver.name || driver.id)} (${F.escapeHtml(driver.id)})</option>`
+        )
+        .join('');
+      if (previous && data.drivers.some((driver) => driver.id === previous)) {
+        payoutSelect.value = previous;
+      }
+      await loadPayoutPending();
+
       driversBody.innerHTML = data.drivers
         .map(
           (driver) => `
@@ -122,6 +137,51 @@
         .join('');
     } catch (error) {
       driversBody.innerHTML = `<tr><td colspan="6" class="empty">โหลดคนขับไม่สำเร็จ: ${F.escapeHtml(error.message)}</td></tr>`;
+    }
+  }
+
+  async function loadPayoutPending() {
+    const driverId = payoutSelect.value;
+    if (!driverId) {
+      payoutPending.textContent = 'ยังไม่มีคนขับให้จ่ายเงิน';
+      return;
+    }
+    try {
+      const summary = await F.request(`/drivers/${encodeURIComponent(driverId)}/earnings`);
+      const count = summary.earnings.filter((earning) => earning.status === 'PENDING').length;
+      payoutPending.textContent = `ยอดค้างจ่าย: ${F.money(summary.pendingAmount)} (${count} รายการ)`;
+    } catch (error) {
+      payoutPending.textContent = `โหลดยอดค้างจ่ายไม่สำเร็จ: ${error.message}`;
+    }
+  }
+
+  async function loadPayouts() {
+    try {
+      const data = await F.request('/payouts?limit=20&offset=0');
+      document.getElementById('payoutCount').textContent = `${data.total} ครั้ง`;
+      if (!data.payouts.length) {
+        payoutsBody.innerHTML = `<tr><td colspan="6" class="empty">ยังไม่มีการจ่ายเงิน</td></tr>`;
+        return;
+      }
+      payoutsBody.innerHTML = data.payouts
+        .map(
+          (payout) => `
+          <tr>
+            <td class="mono" title="${F.escapeHtml(payout.id)}">${F.escapeHtml(payout.id.slice(-10))}</td>
+            <td class="mono">${F.escapeHtml(payout.driverId)}</td>
+            <td>${F.money(payout.amount)}</td>
+            <td>${F.escapeHtml(payout.method || '-')}</td>
+            <td>${F.escapeHtml(payout.reference || '-')}</td>
+            <td>${F.time(payout.paidAt)}</td>
+          </tr>`
+        )
+        .join('');
+    } catch (error) {
+      payoutsBody.innerHTML = `<tr><td colspan="6" class="empty">${
+        error.status === 403
+          ? 'ต้องใช้ API key role admin เพื่อดูประวัติการจ่ายเงิน'
+          : `โหลดประวัติการจ่ายเงินไม่สำเร็จ: ${F.escapeHtml(error.message)}`
+      }</td></tr>`;
     }
   }
 
@@ -188,11 +248,44 @@
     loadMetrics();
     loadOrders();
     loadDrivers();
+    loadPayouts();
     loadBatches();
     loadAudit();
   }
 
   document.getElementById('refreshButton').addEventListener('click', loadAll);
+  payoutSelect.addEventListener('change', loadPayoutPending);
+
+  document.getElementById('payoutButton').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const driverId = payoutSelect.value;
+    if (!driverId) {
+      F.toast('เลือกคนขับก่อน', 'error');
+      return;
+    }
+    if (!confirm(`ยืนยันจ่ายเงินคนขับ ${driverId} ตามยอดค้างทั้งหมด?`)) return;
+    button.disabled = true;
+    try {
+      const result = await F.request('/payouts', {
+        method: 'POST',
+        idempotencyKey: F.uuid(),
+        body: {
+          driverId,
+          method: document.getElementById('payoutMethod').value.trim() || 'transfer',
+          reference: document.getElementById('payoutReference').value.trim() || undefined,
+          note: document.getElementById('payoutNote').value.trim() || undefined
+        }
+      });
+      F.toast(`บันทึกจ่ายเงิน ${F.money(result.payout.amount)} แล้ว`, 'success');
+      document.getElementById('payoutReference').value = '';
+      document.getElementById('payoutNote').value = '';
+      loadAll();
+    } catch (error) {
+      F.toast(error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   document.getElementById('dispatchButton').addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -369,7 +462,9 @@
     'payment:recorded': refresh,
     'batch:assigned': refresh,
     'batch:completed': refresh,
-    'driver:updated': refresh
+    'driver:updated': refresh,
+    'earning:created': refresh,
+    'payout:created': refresh
   });
 
   loadAll();

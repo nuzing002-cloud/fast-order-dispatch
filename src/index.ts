@@ -24,6 +24,7 @@ import {
 } from './middleware';
 import { openApiSpec } from './openapi';
 import { renderPrometheusMetrics } from './prometheus';
+import { createPushNotifier, PushNotifier } from './push';
 import { createRedisRateLimiter, RateLimiterHandle } from './rateLimiter';
 import { attachRealtime } from './realtime';
 import {
@@ -197,6 +198,9 @@ function parseDriver(value: unknown): Driver {
       : nonNegativeNumber(value.totalDeliveries, 'totalDeliveries'),
     rating: value.rating === undefined ? 0 : rating(value.rating, 'rating'),
     isAvailable: value.isAvailable === undefined ? status === DriverStatus.AVAILABLE : value.isAvailable === true,
+    acceptsNewOrders: value.acceptsNewOrders === undefined
+      ? true
+      : value.acceptsNewOrders === true,
     maxOrdersPerBatch: value.maxOrdersPerBatch === undefined
       ? 3
       : positiveInteger(value.maxOrdersPerBatch, 'maxOrdersPerBatch'),
@@ -227,6 +231,12 @@ function parseDriverPatch(value: unknown): DriverPatch {
     }
     patch.isAvailable = value.isAvailable;
   }
+  if (value.acceptsNewOrders !== undefined) {
+    if (typeof value.acceptsNewOrders !== 'boolean') {
+      throw new ValidationError('acceptsNewOrders must be a boolean');
+    }
+    patch.acceptsNewOrders = value.acceptsNewOrders;
+  }
   if (value.maxOrdersPerBatch !== undefined) {
     patch.maxOrdersPerBatch = positiveInteger(value.maxOrdersPerBatch, 'maxOrdersPerBatch');
   }
@@ -236,7 +246,7 @@ function parseDriverPatch(value: unknown): DriverPatch {
 
   if (Object.keys(patch).length === 0) {
     throw new ValidationError(
-      'at least one of currentLatitude/currentLongitude, status, isAvailable, maxOrdersPerBatch, or rating is required'
+      'at least one of currentLatitude/currentLongitude, status, isAvailable, acceptsNewOrders, maxOrdersPerBatch, or rating is required'
     );
   }
   return patch;
@@ -315,11 +325,13 @@ export interface DispatchAppOptions {
   idempotencyStore?: IdempotencyStore;
   idempotencyTtlMs?: number;
   paymentWebhook?: PaymentWebhookOptions;
+  push?: PushNotifier;
 }
 
 export function createDispatchApp(options: DispatchAppOptions = {}): Express {
   const service = options.service ?? new BatchProcessingService();
   const paymentService = options.paymentService ?? new PaymentService();
+  options.push?.bindService(service);
   const app = express();
   app.disable('x-powered-by');
 
@@ -395,6 +407,7 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         dispatchDriverIds: service.getDispatchDriverIds(),
         storage: service.getStorageKind(),
         paymentProvider: paymentService.provider,
+        pushEnabled: Boolean(options.push),
         queueSize: await service.getQueueSize(),
         uptimeSeconds: Math.round(process.uptime()),
         timestamp: new Date().toISOString()
@@ -459,6 +472,115 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         fields: Object.keys(patch)
       });
       response.json({ driver });
+    })
+  );
+
+  app.get(
+    '/drivers/:id/earnings',
+    asyncHandler(async (request, response) => {
+      const summary = await service.getDriverEarnings(routeParam(request, 'id'));
+      response.json(summary);
+    })
+  );
+
+  app.get(
+    '/payouts',
+    requireRole('admin'),
+    asyncHandler(async (request, response) => {
+      const { limit, offset } = parsePagination(request.query);
+      const driverId =
+        request.query.driverId === undefined
+          ? undefined
+          : requiredString(request.query.driverId, 'driverId');
+      const payouts = await service.getPayouts(driverId);
+      response.json({
+        payouts: payouts.slice(offset, offset + limit),
+        total: payouts.length,
+        limit,
+        offset
+      });
+    })
+  );
+
+  app.post(
+    '/payouts',
+    requireRole('admin'),
+    asyncHandler(async (request, response) => {
+      if (!isRecord(request.body)) {
+        throw new ValidationError('request body must be an object');
+      }
+      const payout = await service.createPayout({
+        driverId: requiredString(request.body.driverId, 'driverId'),
+        method: optionalString(request.body.method, 'method'),
+        reference: optionalString(request.body.reference, 'reference'),
+        note: optionalString(request.body.note, 'note')
+      });
+      await audit(request, 'driver.payout_paid', 'driver', payout.driverId, {
+        payoutId: payout.id,
+        amount: payout.amount,
+        method: payout.method,
+        reference: payout.reference
+      });
+      response.status(201).json({ payout });
+    })
+  );
+
+  app.get('/push/public-key', (_request: Request, response: Response) => {
+    if (!options.push) {
+      response.status(503).json({ error: 'Push notifications are not configured' });
+      return;
+    }
+    response.json({ publicKey: options.push.getPublicKey() });
+  });
+
+  app.post(
+    '/push/subscribe',
+    asyncHandler(async (request, response) => {
+      if (!options.push) {
+        throw new ConflictError('Push notifications are not configured');
+      }
+      if (!isRecord(request.body)) {
+        throw new ValidationError('request body must be an object');
+      }
+      const driverId = requiredString(request.body.driverId, 'driverId');
+      const driver = await service.getDriver(driverId);
+      if (!driver) throw new NotFoundError(`Driver ${driverId} was not found`);
+      const subscription = request.body.subscription;
+      if (!isRecord(subscription)) {
+        throw new ValidationError('subscription must be an object');
+      }
+      const keys = subscription.keys;
+      if (!isRecord(keys)) {
+        throw new ValidationError('subscription.keys must be an object');
+      }
+      const record = await options.push.subscribe(driverId, {
+        endpoint: requiredString(subscription.endpoint, 'subscription.endpoint'),
+        keys: {
+          p256dh: requiredString(keys.p256dh, 'subscription.keys.p256dh'),
+          auth: requiredString(keys.auth, 'subscription.keys.auth')
+        }
+      });
+      await audit(request, 'push.subscribed', 'driver', driverId, {
+        endpoint: record.endpoint.slice(0, 80)
+      });
+      response.status(201).json({
+        subscription: { endpoint: record.endpoint, driverId }
+      });
+    })
+  );
+
+  app.post(
+    '/push/unsubscribe',
+    asyncHandler(async (request, response) => {
+      if (!options.push) {
+        throw new ConflictError('Push notifications are not configured');
+      }
+      if (!isRecord(request.body)) {
+        throw new ValidationError('request body must be an object');
+      }
+      const endpoint = requiredString(request.body.endpoint, 'endpoint');
+      const removed = await options.push.unsubscribe(endpoint);
+      response.json({ removed });
     })
   );
 
@@ -681,6 +803,20 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
       const order = await service.updateOrderStatus(routeParam(request, 'id'), status);
       await audit(request, 'order.status_changed', 'order', order.id, { status });
       response.json({ order });
+    })
+  );
+
+  app.post(
+    '/orders/:id/decline',
+    asyncHandler(async (request, response) => {
+      const driverId = isRecord(request.body)
+        ? optionalString(request.body.driverId, 'driverId')
+        : undefined;
+      const result = await service.declineOrder(routeParam(request, 'id'), driverId);
+      await audit(request, 'order.declined', 'order', result.order.id, {
+        driverId: driverId ?? result.driver?.id
+      });
+      response.json(result);
     })
   );
 
@@ -968,9 +1104,11 @@ async function handlePaymentWebhook(
 
 const store = createDispatchStore(config);
 export const dispatchService = new BatchProcessingService(3, store, {
-  dispatchDriverIds: config.dispatchDriverIds
+  dispatchDriverIds: config.dispatchDriverIds,
+  driverSharePercent: config.driverSharePercent
 });
 export const paymentService = createPaymentService(config);
+export const pushNotifier = createPushNotifier(store, config);
 export const app = createDispatchApp({
   service: dispatchService,
   paymentService,
@@ -987,7 +1125,8 @@ export const app = createDispatchApp({
       config.paymentProvider === 'stripe'
         ? config.stripeWebhookSecret
         : config.paymentWebhookSecret
-  }
+  },
+  push: pushNotifier
 });
 
 export interface StartServerOptions {
@@ -1006,6 +1145,7 @@ export async function startServer(
   }
 
   await dispatchService.initialize();
+  pushNotifier.bindService(dispatchService);
 
   const server = createServer(app);
   const io = await attachRealtime(server, dispatchService, {
@@ -1038,6 +1178,8 @@ export async function startServer(
           : 'disabled',
       rateLimitBackend: config.redisUrl ? 'redis' : 'memory',
       paymentProvider: config.paymentProvider,
+      driverSharePercent: config.driverSharePercent,
+      push: Boolean(config.vapidPublicKey && config.vapidPrivateKey),
       redis: Boolean(config.redisUrl)
     });
     logger.info('dispatch_restricted', { driverIds: dispatchService.getDispatchDriverIds() });

@@ -5,19 +5,25 @@ import {
   AuditLogEntry,
   BatchAssignment,
   Driver,
+  DriverEarning,
   DriverStatus,
   Order,
   OrderStatus,
   PaymentStatus,
   PaymentTransaction,
+  Payout,
+  PushSubscriptionRecord,
   SystemMetrics
 } from '../types/order';
 import {
   cloneAudit,
   cloneBatch,
   cloneDriver,
+  cloneEarning,
   cloneOrder,
-  clonePayment
+  clonePayment,
+  clonePayout,
+  clonePushSubscription
 } from './clone';
 
 export type StorageKind = 'memory' | 'postgres' | 'pglite';
@@ -52,6 +58,12 @@ export interface DispatchTransaction {
 
   insertPayment(payment: PaymentTransaction): Promise<void>;
   insertAudit(entry: AuditLogEntry): Promise<void>;
+
+  getEarningByOrder(orderId: string, lock?: boolean): Promise<DriverEarning | undefined>;
+  getPendingEarningsForDriver(driverId: string, lock?: boolean): Promise<DriverEarning[]>;
+  insertEarning(earning: DriverEarning): Promise<void>;
+  updateEarning(earning: DriverEarning): Promise<void>;
+  insertPayout(payout: Payout): Promise<void>;
 }
 
 export interface DispatchStore extends IdempotencyStore {
@@ -79,6 +91,15 @@ export interface DispatchStore extends IdempotencyStore {
     offset: number
   ): Promise<{ entries: AuditLogEntry[]; total: number }>;
   getMetrics(): Promise<SystemMetrics>;
+
+  getEarningByOrder(orderId: string): Promise<DriverEarning | undefined>;
+  getEarningsForDriver(driverId: string): Promise<DriverEarning[]>;
+  getEarnings(): Promise<DriverEarning[]>;
+  getPayout(payoutId: string): Promise<Payout | undefined>;
+  getPayouts(driverId?: string): Promise<Payout[]>;
+  savePushSubscription(subscription: PushSubscriptionRecord): Promise<void>;
+  deletePushSubscription(endpoint: string): Promise<boolean>;
+  getPushSubscriptions(driverId?: string): Promise<PushSubscriptionRecord[]>;
 }
 
 const TERMINAL = new Set<OrderStatus>([
@@ -92,6 +113,9 @@ interface MemorySnapshot {
   drivers: Map<string, Driver>;
   batches: Map<string, BatchAssignment>;
   payments: Map<string, PaymentTransaction>;
+  earnings: Map<string, DriverEarning>;
+  payouts: Map<string, Payout>;
+  pushSubscriptions: Map<string, PushSubscriptionRecord>;
   audits: AuditLogEntry[];
   idempotency: Map<string, IdempotencyRecord>;
 }
@@ -102,6 +126,9 @@ export class MemoryDispatchStore implements DispatchStore {
   private drivers = new Map<string, Driver>();
   private batches = new Map<string, BatchAssignment>();
   private payments = new Map<string, PaymentTransaction>();
+  private earnings = new Map<string, DriverEarning>();
+  private payouts = new Map<string, Payout>();
+  private pushSubscriptions = new Map<string, PushSubscriptionRecord>();
   private audits: AuditLogEntry[] = [];
   private idempotency = new Map<string, IdempotencyRecord>();
   private tail: Promise<void> = Promise.resolve();
@@ -117,6 +144,9 @@ export class MemoryDispatchStore implements DispatchStore {
     this.drivers.clear();
     this.batches.clear();
     this.payments.clear();
+    this.earnings.clear();
+    this.payouts.clear();
+    this.pushSubscriptions.clear();
     this.audits = [];
     this.idempotency.clear();
   }
@@ -273,6 +303,57 @@ export class MemoryDispatchStore implements DispatchStore {
     };
   }
 
+  async getEarningByOrder(orderId: string): Promise<DriverEarning | undefined> {
+    await this.tail;
+    const earning = this.earnings.get(orderId);
+    return earning ? cloneEarning(earning) : undefined;
+  }
+
+  async getEarningsForDriver(driverId: string): Promise<DriverEarning[]> {
+    await this.tail;
+    return [...this.earnings.values()]
+      .filter((earning) => earning.driverId === driverId)
+      .sort(compareEarnings)
+      .map(cloneEarning);
+  }
+
+  async getEarnings(): Promise<DriverEarning[]> {
+    await this.tail;
+    return [...this.earnings.values()].sort(compareEarnings).map(cloneEarning);
+  }
+
+  async getPayout(payoutId: string): Promise<Payout | undefined> {
+    await this.tail;
+    const payout = this.payouts.get(payoutId);
+    return payout ? clonePayout(payout) : undefined;
+  }
+
+  async getPayouts(driverId?: string): Promise<Payout[]> {
+    await this.tail;
+    return [...this.payouts.values()]
+      .filter((payout) => driverId === undefined || payout.driverId === driverId)
+      .sort(comparePayouts)
+      .map(clonePayout);
+  }
+
+  async savePushSubscription(subscription: PushSubscriptionRecord): Promise<void> {
+    await this.tail;
+    this.pushSubscriptions.set(subscription.endpoint, clonePushSubscription(subscription));
+  }
+
+  async deletePushSubscription(endpoint: string): Promise<boolean> {
+    await this.tail;
+    return this.pushSubscriptions.delete(endpoint);
+  }
+
+  async getPushSubscriptions(driverId?: string): Promise<PushSubscriptionRecord[]> {
+    await this.tail;
+    return [...this.pushSubscriptions.values()]
+      .filter((subscription) => driverId === undefined || subscription.driverId === driverId)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map(clonePushSubscription);
+  }
+
   async getIdempotency(key: string): Promise<IdempotencyRecord | undefined> {
     await this.tail;
     const record = this.idempotency.get(key);
@@ -370,6 +451,20 @@ export class MemoryDispatchStore implements DispatchStore {
     return [...this.payments.values()];
   }
 
+  readEarning(orderId: string): DriverEarning | undefined {
+    const earning = this.earnings.get(orderId);
+    return earning ? cloneEarning(earning) : undefined;
+  }
+
+  listEarnings(): DriverEarning[] {
+    return [...this.earnings.values()].map(cloneEarning);
+  }
+
+  readPayout(payoutId: string): Payout | undefined {
+    const payout = this.payouts.get(payoutId);
+    return payout ? clonePayout(payout) : undefined;
+  }
+
   queuedOrders(): Order[] {
     return [...this.orders.values()]
       .filter((order) => order.status === OrderStatus.PENDING && order.queuedAt !== undefined)
@@ -397,6 +492,14 @@ export class MemoryDispatchStore implements DispatchStore {
     this.payments.set(payment.id, clonePayment(payment));
   }
 
+  writeEarning(earning: DriverEarning): void {
+    this.earnings.set(earning.orderId, cloneEarning(earning));
+  }
+
+  writePayout(payout: Payout): void {
+    this.payouts.set(payout.id, clonePayout(payout));
+  }
+
   writeAudit(entry: AuditLogEntry): void {
     this.audits.push(cloneAudit(entry));
   }
@@ -422,6 +525,16 @@ export class MemoryDispatchStore implements DispatchStore {
       drivers: new Map([...this.drivers].map(([id, driver]) => [id, cloneDriver(driver)])),
       batches: new Map([...this.batches].map(([id, batch]) => [id, cloneBatch(batch)])),
       payments: new Map([...this.payments].map(([id, payment]) => [id, clonePayment(payment)])),
+      earnings: new Map(
+        [...this.earnings].map(([orderId, earning]) => [orderId, cloneEarning(earning)])
+      ),
+      payouts: new Map([...this.payouts].map(([id, payout]) => [id, clonePayout(payout)])),
+      pushSubscriptions: new Map(
+        [...this.pushSubscriptions].map(([endpoint, subscription]) => [
+          endpoint,
+          clonePushSubscription(subscription)
+        ])
+      ),
       audits: this.audits.map(cloneAudit),
       idempotency: new Map([...this.idempotency].map(([key, record]) => [key, { ...record }]))
     };
@@ -432,6 +545,9 @@ export class MemoryDispatchStore implements DispatchStore {
     this.drivers = snapshot.drivers;
     this.batches = snapshot.batches;
     this.payments = snapshot.payments;
+    this.earnings = snapshot.earnings;
+    this.payouts = snapshot.payouts;
+    this.pushSubscriptions = snapshot.pushSubscriptions;
     this.audits = snapshot.audits;
     this.idempotency = snapshot.idempotency;
   }
@@ -527,8 +643,49 @@ class MemoryDispatchTransaction implements DispatchTransaction {
   async insertAudit(entry: AuditLogEntry): Promise<void> {
     this.store.writeAudit(entry);
   }
+
+  async getEarningByOrder(orderId: string, _lock = false): Promise<DriverEarning | undefined> {
+    return this.store.readEarning(orderId);
+  }
+
+  async getPendingEarningsForDriver(
+    driverId: string,
+    _lock = false
+  ): Promise<DriverEarning[]> {
+    return this.store
+      .listEarnings()
+      .filter((earning) => earning.driverId === driverId && earning.status === 'PENDING')
+      .sort(compareEarnings);
+  }
+
+  async insertEarning(earning: DriverEarning): Promise<void> {
+    if (this.store.readEarning(earning.orderId)) return;
+    this.store.writeEarning(earning);
+  }
+
+  async updateEarning(earning: DriverEarning): Promise<void> {
+    if (!this.store.readEarning(earning.orderId)) {
+      throw new NotFoundError(`Earning for order ${earning.orderId} was not found`);
+    }
+    this.store.writeEarning(earning);
+  }
+
+  async insertPayout(payout: Payout): Promise<void> {
+    if (this.store.readPayout(payout.id)) {
+      throw new ConflictError(`Payout ${payout.id} already exists`);
+    }
+    this.store.writePayout(payout);
+  }
 }
 
 export function isTerminalOrder(order: Order): boolean {
   return TERMINAL.has(order.status);
+}
+
+function compareEarnings(left: DriverEarning, right: DriverEarning): number {
+  return left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id);
+}
+
+function comparePayouts(left: Payout, right: Payout): number {
+  return left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id);
 }

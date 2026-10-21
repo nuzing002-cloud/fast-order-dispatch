@@ -6,6 +6,9 @@
   const driverCard = document.getElementById('driverCard');
   const jobsBox = document.getElementById('jobs');
   const liveBadge = document.getElementById('liveBadge');
+  const earningsBox = document.getElementById('earningsBox');
+  const enablePushButton = document.getElementById('enablePush');
+  const pushState = document.getElementById('pushState');
 
   idInput.value = F.getDriverId() || '1388246780';
 
@@ -25,7 +28,7 @@
       document.getElementById('latInput').value = currentDriver.currentLatitude ?? '';
       document.getElementById('lngInput').value = currentDriver.currentLongitude ?? '';
       renderDriver();
-      await loadJobs();
+      await Promise.all([loadJobs(), loadEarnings()]);
     } catch (error) {
       currentDriver = null;
       jobs = [];
@@ -67,11 +70,34 @@
         <dt>เรตติ้ง</dt><dd>${Number(driver.rating || 0).toFixed(1)} / 5</dd>
         <dt>อัปเดตล่าสุด</dt><dd>${F.time(driver.lastLocationUpdate)}</dd>
       </dl>
-      <div class="row" style="margin-top: 12px">${actionButtons(driver)}</div>
+      <div class="row" style="margin-top: 12px">
+        ${actionButtons(driver)}
+        <button class="btn-small" data-accept-toggle>
+          ${driver.acceptsNewOrders === false ? 'เปิดรับงานใหม่' : 'หยุดรับงานใหม่'}
+        </button>
+      </div>
       <p class="muted small" style="margin-bottom: 0">
         สถานะ BUSY ถูกจัดการโดยระบบอัตโนมัติ และเปลี่ยนสถานะไม่ได้ขณะมีงานค้าง
+        · ${driver.acceptsNewOrders === false ? 'ขณะนี้หยุดรับงานใหม่' : 'พร้อมรับงานใหม่'}
       </p>
     `;
+
+    driverCard.querySelector('[data-accept-toggle]')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const payload = await F.request(`/drivers/${encodeURIComponent(driver.id)}`, {
+          method: 'PATCH',
+          body: { acceptsNewOrders: driver.acceptsNewOrders === false }
+        });
+        currentDriver = payload.driver || payload;
+        renderDriver();
+        F.toast(currentDriver.acceptsNewOrders === false ? 'หยุดรับงานใหม่แล้ว' : 'เปิดรับงานใหม่แล้ว', 'success');
+      } catch (error) {
+        F.toast(error.message, 'error');
+        button.disabled = false;
+      }
+    });
 
     driverCard.querySelectorAll('[data-status]').forEach((button) => {
       button.addEventListener('click', async () => {
@@ -126,6 +152,11 @@
     return `<button class="btn-primary btn-small" data-next="${action[0]}" data-order="${F.escapeHtml(order.id)}">${action[1]}</button>`;
   }
 
+  function declineAction(order) {
+    if (order.status !== 'ASSIGNED') return '';
+    return `<button class="btn-small btn-danger" data-decline="${F.escapeHtml(order.id)}">ปฏิเสธงาน</button>`;
+  }
+
   function renderJobs() {
     if (jobs.length === 0) {
       jobsBox.innerHTML = `<p class="empty">ยังไม่มีงานที่ได้รับมอบหมาย</p>`;
@@ -145,7 +176,7 @@
             <dt>ยอดเก็บเงิน</dt><dd>${F.money(order.totalAmount)}</dd>
             <dt>หมายเหตุ</dt><dd>${F.escapeHtml(order.notes || '-')}</dd>
           </dl>
-          <div class="row">${nextAction(order)}</div>
+          <div class="row">${nextAction(order)} ${declineAction(order)}</div>
         </div>`
       )
       .join('');
@@ -166,6 +197,60 @@
         }
       });
     });
+
+    jobsBox.querySelectorAll('[data-decline]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        if (!currentDriver) return;
+        if (!confirm('ปฏิเสธงานนี้? งานจะถูกส่งคืนคิวและไม่เสนอให้คุณอีก')) {
+          button.disabled = false;
+          return;
+        }
+        button.disabled = true;
+        try {
+          await F.request(`/orders/${encodeURIComponent(button.dataset.decline)}/decline`, {
+            method: 'POST',
+            body: { driverId: currentDriver.id }
+          });
+          F.toast('ปฏิเสธงานแล้ว งานถูกส่งคืนคิว', 'success');
+          await loadDriver();
+        } catch (error) {
+          F.toast(error.message, 'error');
+          button.disabled = false;
+        }
+      });
+    });
+  }
+
+  async function loadEarnings() {
+    if (!currentDriver) return;
+    try {
+      const summary = await F.request(`/drivers/${encodeURIComponent(currentDriver.id)}/earnings`);
+      const recent = (summary.earnings || []).slice(-5).reverse();
+      earningsBox.innerHTML = `
+        <dl class="kv">
+          <dt>รอจ่าย</dt><dd>${F.money(summary.pendingAmount)}</dd>
+          <dt>จ่ายแล้ว</dt><dd>${F.money(summary.paidAmount)}</dd>
+          <dt>รวมทั้งหมด</dt><dd>${F.money(summary.totalAmount)}</dd>
+        </dl>
+        ${
+          recent.length
+            ? `<div class="card-list">${recent
+                .map(
+                  (earning) => `
+                  <div class="order-card">
+                    <div class="order-card-head">
+                      <span class="mono">${F.escapeHtml(earning.orderId.slice(-10))}</span>
+                      <span class="badge ${earning.status === 'PAID' ? 'status-DELIVERED' : 'status-PENDING'}">${earning.status === 'PAID' ? 'จ่ายแล้ว' : 'รอจ่าย'}</span>
+                    </div>
+                    <span class="muted small">${F.money(earning.amount)} · ${F.time(earning.createdAt)}</span>
+                  </div>`
+                )
+                .join('')}</div>`
+            : '<p class="muted small">ยังไม่มีรายได้</p>'
+        }`;
+    } catch (error) {
+      earningsBox.innerHTML = `<p class="empty">โหลดรายได้ไม่สำเร็จ: ${F.escapeHtml(error.message)}</p>`;
+    }
   }
 
   document.getElementById('loadDriver').addEventListener('click', loadDriver);
@@ -216,6 +301,77 @@
       F.toast(error.message, 'error');
     }
   });
+
+  document.getElementById('refreshEarnings').addEventListener('click', loadEarnings);
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+  }
+
+  function setPushState(text, status) {
+    pushState.textContent = text;
+    pushState.className = `badge status-${status}`;
+  }
+
+  async function refreshPushState() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setPushState('เบราว์เซอร์ไม่รองรับ', 'FAILED');
+      enablePushButton.disabled = true;
+      return;
+    }
+    try {
+      const registration = await navigator.serviceWorker.getRegistration('/sw.js');
+      const subscription = registration ? await registration.pushManager.getSubscription() : null;
+      setPushState(subscription ? 'เปิดแจ้งเตือนแล้ว' : 'ยังไม่เปิด', subscription ? 'AVAILABLE' : 'PENDING');
+    } catch (_error) {
+      setPushState('ตรวจสอบไม่สำเร็จ', 'PENDING');
+    }
+  }
+
+  enablePushButton.addEventListener('click', async () => {
+    if (!currentDriver) {
+      F.toast('โหลดข้อมูลคนขับก่อน', 'error');
+      return;
+    }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      F.toast('เบราว์เซอร์นี้ไม่รองรับ push notification', 'error');
+      return;
+    }
+    enablePushButton.disabled = true;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        F.toast('ยังไม่ได้รับอนุญาตให้แจ้งเตือน', 'error');
+        return;
+      }
+      const { publicKey } = await F.request('/push/public-key');
+      if (!publicKey) throw new Error('เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า push');
+      const registration = await navigator.serviceWorker.ready;
+      const existing = await registration.pushManager.getSubscription();
+      const subscription =
+        existing ??
+        (await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey)
+        }));
+      await F.request('/push/subscribe', {
+        method: 'POST',
+        body: { driverId: currentDriver.id, subscription: subscription.toJSON() }
+      });
+      setPushState('เปิดแจ้งเตือนแล้ว', 'AVAILABLE');
+      F.toast('เปิดแจ้งเตือนงานใหม่แล้ว', 'success');
+    } catch (error) {
+      F.toast(error.message, 'error');
+      await refreshPushState();
+    } finally {
+      enablePushButton.disabled = false;
+    }
+  });
+
+  refreshPushState();
 
   document.getElementById('liveBadge').textContent = 'realtime: กำลังเชื่อมต่อ...';
   const socket = F.connectSocket({

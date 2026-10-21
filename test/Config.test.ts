@@ -73,7 +73,9 @@ const productionEnv: NodeJS.ProcessEnv = {
   REDIS_URL: 'redis://redis:6379',
   PAYMENT_PROVIDER: 'stripe',
   STRIPE_SECRET_KEY: 'sk_live_example',
-  STRIPE_WEBHOOK_SECRET: 'whsec_example'
+  STRIPE_WEBHOOK_SECRET: 'whsec_example',
+  VAPID_PUBLIC_KEY: 'BExampleVapidPublicKey012345678901234567890123456789012345678901',
+  VAPID_PRIVATE_KEY: 'exampleVapidPrivateKey0123456789012345678901234'
 };
 
 test('accepts a hardened production configuration', () => {
@@ -96,6 +98,11 @@ const unsafeProductionEnv: Array<[string, NodeJS.ProcessEnv, string]> = [
   ['missing database url', { DATABASE_URL: undefined }, 'DATABASE_URL'],
   ['pglite in production', { PGLITE_DATA_DIR: './.pglite' }, 'PGLITE_DATA_DIR'],
   ['missing redis', { REDIS_URL: undefined }, 'REDIS_URL'],
+  [
+    'missing vapid keys',
+    { VAPID_PUBLIC_KEY: undefined, VAPID_PRIVATE_KEY: undefined },
+    'VAPID_PUBLIC_KEY'
+  ],
   ['legacy sqlite path', { DB_PATH: './data/dispatch.sqlite3' }, 'DB_PATH'],
   ['missing stripe webhook secret', { STRIPE_WEBHOOK_SECRET: undefined }, 'STRIPE_WEBHOOK_SECRET'],
   [

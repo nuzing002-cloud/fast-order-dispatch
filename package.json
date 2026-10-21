@@ -26,7 +26,8 @@
     "redis": "^4.6.7",
     "socket.io": "^4.5.4",
     "swagger-ui-dist": "^5.34.0",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.10",
@@ -35,6 +36,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.23.1",
+    "@types/web-push": "^3.6.4",
     "eslint": "^9.39.5",
     "globals": "^17.13.0",
     "jest": "^30.5.2",

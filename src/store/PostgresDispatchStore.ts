@@ -5,9 +5,12 @@ import {
   AuditLogEntry,
   BatchAssignment,
   Driver,
+  DriverEarning,
   DriverStatus,
   Order,
   PaymentTransaction,
+  Payout,
+  PushSubscriptionRecord,
   SystemMetrics
 } from '../types/order';
 import type {
@@ -87,6 +90,32 @@ function paymentValues(payment: PaymentTransaction): unknown[] {
 
 function auditValues(entry: AuditLogEntry): unknown[] {
   return [entry.id, entry.timestamp, stringifyJson(entry)];
+}
+
+function earningValues(earning: DriverEarning): unknown[] {
+  return [
+    earning.id,
+    earning.driverId,
+    earning.orderId,
+    earning.status,
+    earning.amount,
+    earning.createdAt,
+    earning.paidAt ?? null,
+    earning.payoutId ?? null,
+    stringifyJson(earning)
+  ];
+}
+
+function payoutValues(payout: Payout): unknown[] {
+  return [
+    payout.id,
+    payout.driverId,
+    payout.status,
+    payout.amount,
+    payout.createdAt,
+    payout.paidAt,
+    stringifyJson(payout)
+  ];
 }
 
 export class PostgresDispatchStore implements DispatchStore {
@@ -202,6 +231,78 @@ export class PostgresDispatchStore implements DispatchStore {
       [providerTransactionId]
     );
     return rows[0] ? parseJson<PaymentTransaction>(rows[0].data) : undefined;
+  }
+
+  async getEarningByOrder(orderId: string): Promise<DriverEarning | undefined> {
+    const rows = await this.database.query(
+      'SELECT data FROM driver_earnings WHERE order_id = $1',
+      [orderId]
+    );
+    return rows[0] ? parseJson<DriverEarning>(rows[0].data) : undefined;
+  }
+
+  async getEarningsForDriver(driverId: string): Promise<DriverEarning[]> {
+    const rows = await this.database.query(
+      'SELECT data FROM driver_earnings WHERE driver_id = $1 ORDER BY created_at ASC, id ASC',
+      [driverId]
+    );
+    return rows.map((row) => parseJson<DriverEarning>(row.data));
+  }
+
+  async getEarnings(): Promise<DriverEarning[]> {
+    const rows = await this.database.query(
+      'SELECT data FROM driver_earnings ORDER BY created_at ASC, id ASC'
+    );
+    return rows.map((row) => parseJson<DriverEarning>(row.data));
+  }
+
+  async getPayout(payoutId: string): Promise<Payout | undefined> {
+    const rows = await this.database.query('SELECT data FROM payouts WHERE id = $1', [payoutId]);
+    return rows[0] ? parseJson<Payout>(rows[0].data) : undefined;
+  }
+
+  async getPayouts(driverId?: string): Promise<Payout[]> {
+    const rows = await this.database.query(
+      `SELECT data FROM payouts
+       WHERE ($1::text IS NULL OR driver_id = $1)
+       ORDER BY created_at ASC, id ASC`,
+      [driverId ?? null]
+    );
+    return rows.map((row) => parseJson<Payout>(row.data));
+  }
+
+  async savePushSubscription(subscription: PushSubscriptionRecord): Promise<void> {
+    await this.database.query(
+      `INSERT INTO push_subscriptions (endpoint, driver_id, created_at, data)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (endpoint) DO UPDATE SET
+         driver_id = excluded.driver_id,
+         data = excluded.data`,
+      [
+        subscription.endpoint,
+        subscription.driverId,
+        subscription.createdAt,
+        stringifyJson(subscription)
+      ]
+    );
+  }
+
+  async deletePushSubscription(endpoint: string): Promise<boolean> {
+    const rows = await this.database.query(
+      'DELETE FROM push_subscriptions WHERE endpoint = $1 RETURNING endpoint',
+      [endpoint]
+    );
+    return rows.length > 0;
+  }
+
+  async getPushSubscriptions(driverId?: string): Promise<PushSubscriptionRecord[]> {
+    const rows = await this.database.query(
+      `SELECT data FROM push_subscriptions
+       WHERE ($1::text IS NULL OR driver_id = $1)
+       ORDER BY created_at ASC`,
+      [driverId ?? null]
+    );
+    return rows.map((row) => parseJson<PushSubscriptionRecord>(row.data));
   }
 
   async getAuditLog(
@@ -521,6 +622,62 @@ class PostgresDispatchTransaction implements DispatchTransaction {
        ON CONFLICT (id) DO UPDATE SET timestamp = excluded.timestamp, data = excluded.data`,
       auditValues(entry)
     );
+  }
+
+  async getEarningByOrder(
+    orderId: string,
+    lock = false
+  ): Promise<DriverEarning | undefined> {
+    const rows = await this.tx.query(
+      `SELECT data FROM driver_earnings WHERE order_id = $1${lock ? ' FOR UPDATE' : ''}`,
+      [orderId]
+    );
+    return rows[0] ? parseJson<DriverEarning>(rows[0].data) : undefined;
+  }
+
+  async getPendingEarningsForDriver(
+    driverId: string,
+    lock = false
+  ): Promise<DriverEarning[]> {
+    const rows = await this.tx.query(
+      `SELECT data FROM driver_earnings
+       WHERE driver_id = $1 AND status = 'PENDING'
+       ORDER BY created_at ASC, id ASC
+       ${lock ? 'FOR UPDATE' : ''}`,
+      [driverId]
+    );
+    return rows.map((row) => parseJson<DriverEarning>(row.data));
+  }
+
+  async insertEarning(earning: DriverEarning): Promise<void> {
+    await this.tx.query(
+      `INSERT INTO driver_earnings (
+         id, driver_id, order_id, status, amount, paid_at, payout_id, created_at, data
+       ) VALUES ($1, $2, $3, $4, $5, $7, $8, $6, $9::jsonb)
+       ON CONFLICT (order_id) DO NOTHING`,
+      earningValues(earning)
+    );
+  }
+
+  async updateEarning(earning: DriverEarning): Promise<void> {
+    await this.tx.query(
+      `UPDATE driver_earnings
+       SET id = $1, driver_id = $2, status = $4, amount = $5, created_at = $6,
+           paid_at = $7, payout_id = $8, data = $9::jsonb
+       WHERE order_id = $3`,
+      earningValues(earning)
+    );
+  }
+
+  async insertPayout(payout: Payout): Promise<void> {
+    const rows = await this.tx.query(
+      `INSERT INTO payouts (id, driver_id, status, amount, created_at, paid_at, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id`,
+      payoutValues(payout)
+    );
+    if (!rows[0]) throw new ConflictError(`Payout ${payout.id} already exists`);
   }
 }
 

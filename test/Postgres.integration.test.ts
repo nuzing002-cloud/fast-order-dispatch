@@ -27,7 +27,7 @@ describePostgres('PostgreSQL integration', () => {
 
   beforeEach(async () => {
     await first.exec(
-      'TRUNCATE TABLE batch_orders, payments, audits, batches, orders, drivers, idempotency RESTART IDENTITY CASCADE'
+      'TRUNCATE TABLE batch_orders, payments, audits, batches, orders, drivers, idempotency, driver_earnings, payouts, push_subscriptions RESTART IDENTITY CASCADE'
     );
   });
 
@@ -128,5 +128,55 @@ describePostgres('PostgreSQL integration', () => {
       now + 60_000
     );
     expect(reclaimed.claimed).toBe(true);
+  });
+
+  test('persists earnings, payouts, declines, and push subscriptions', async () => {
+    const driverId = 'earn-driver';
+    const service = new BatchProcessingService(3, storeA, {
+      dispatchDriverIds: [driverId],
+      driverSharePercent: 80
+    });
+    await service.registerDriver(makeDriver(driverId));
+
+    await service.addOrder(makeOrder('earn-order'));
+    expect((await service.processBatch())?.orderIds).toContain('earn-order');
+    for (const status of [
+      OrderStatus.PICKED_UP,
+      OrderStatus.IN_DELIVERY,
+      OrderStatus.DELIVERED
+    ]) {
+      await service.updateOrderStatus('earn-order', status);
+    }
+
+    const before = await service.getDriverEarnings(driverId);
+    expect(before.pendingAmount).toBe(8);
+    expect(before.earnings).toHaveLength(1);
+
+    const payout = await service.createPayout({ driverId, method: 'promptpay' });
+    expect(payout.amount).toBe(8);
+    const after = await service.getDriverEarnings(driverId);
+    expect(after.pendingAmount).toBe(0);
+    expect(after.paidAmount).toBe(8);
+    expect(after.earnings[0]?.status).toBe('PAID');
+    await expect(service.createPayout({ driverId })).rejects.toThrow('no pending earnings');
+
+    const second = makeOrder('decline-order');
+    await service.addOrder(second);
+    expect((await service.processBatch())?.orderIds).toContain('decline-order');
+    const declined = await service.declineOrder('decline-order', driverId);
+    expect(declined.order.status).toBe(OrderStatus.PENDING);
+    expect(declined.order.assignedDriverId).toBeUndefined();
+    expect(declined.order.declinedDriverIds).toContain(driverId);
+
+    const endpoint = 'https://push.example.com/postgres';
+    await storeA.savePushSubscription({
+      endpoint,
+      driverId,
+      keys: { p256dh: 'p256dh-value', auth: 'auth-value' },
+      createdAt: new Date()
+    });
+    expect(await storeB.getPushSubscriptions(driverId)).toHaveLength(1);
+    expect(await storeA.deletePushSubscription(endpoint)).toBe(true);
+    expect(await storeB.getPushSubscriptions(driverId)).toHaveLength(0);
   });
 });

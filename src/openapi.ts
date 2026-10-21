@@ -67,6 +67,108 @@ export const openApiSpec = {
         }
       }
     },
+    '/drivers/{id}/earnings': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: {
+        summary: 'Driver earnings and payout history',
+        responses: {
+          '200': { description: 'Earnings summary' },
+          '404': { description: 'Driver not found' }
+        }
+      }
+    },
+    '/payouts': {
+      get: {
+        summary: 'List driver payouts',
+        parameters: [
+          { name: 'driverId', in: 'query', schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } }
+        ],
+        responses: {
+          '200': { description: 'Payouts' },
+          '403': { description: 'Requires admin role' }
+        }
+      },
+      post: {
+        summary: 'Pay out all pending earnings for a driver (admin)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['driverId'],
+                properties: {
+                  driverId: { type: 'string' },
+                  method: { type: 'string' },
+                  reference: { type: 'string' },
+                  note: { type: 'string' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          '201': { description: 'Payout recorded' },
+          '404': { description: 'Driver not found' },
+          '409': { description: 'No pending earnings' }
+        }
+      }
+    },
+    '/push/public-key': {
+      get: {
+        summary: 'VAPID public key for browser push subscriptions',
+        security: [],
+        responses: {
+          '200': { description: 'Public key' },
+          '503': { description: 'Push notifications are not configured' }
+        }
+      }
+    },
+    '/push/subscribe': {
+      post: {
+        summary: 'Register a browser push subscription for a driver',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['driverId', 'subscription'],
+                properties: {
+                  driverId: { type: 'string' },
+                  subscription: { $ref: '#/components/schemas/PushSubscription' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          '201': { description: 'Subscribed' },
+          '400': { description: 'Validation error' },
+          '404': { description: 'Driver not found' }
+        }
+      }
+    },
+    '/push/unsubscribe': {
+      post: {
+        summary: 'Remove a browser push subscription',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['endpoint'],
+                properties: { endpoint: { type: 'string' } }
+              }
+            }
+          }
+        },
+        responses: { '200': { description: 'Subscription removed (if it existed)' } }
+      }
+    },
     '/orders': {
       get: {
         summary: 'List orders',
@@ -150,6 +252,28 @@ export const openApiSpec = {
           '400': { description: 'Unknown status' },
           '404': { description: 'Not found' },
           '409': { description: 'Invalid transition' }
+        }
+      }
+    },
+    '/orders/{id}/decline': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      post: {
+        summary: 'Decline an assigned order (driver) and return it to the queue',
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { driverId: { type: 'string' } }
+              }
+            }
+          }
+        },
+        responses: {
+          '200': { description: 'Order returned to PENDING' },
+          '404': { description: 'Not found' },
+          '409': { description: 'Order is not ASSIGNED' }
         }
       }
     },
@@ -262,6 +386,22 @@ export const openApiSpec = {
       Error: {
         type: 'object',
         properties: { error: { type: 'string' } }
+      },
+      PushSubscription: {
+        type: 'object',
+        required: ['endpoint', 'keys'],
+        properties: {
+          endpoint: { type: 'string' },
+          expirationTime: { type: 'number', nullable: true },
+          keys: {
+            type: 'object',
+            required: ['p256dh', 'auth'],
+            properties: {
+              p256dh: { type: 'string' },
+              auth: { type: 'string' }
+            }
+          }
+        }
       },
       Restaurant: {
         type: 'object',

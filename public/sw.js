@@ -1,4 +1,4 @@
-const CACHE = 'fod-v1';
+const CACHE = 'fod-v2';
 const PRECACHE = [
   '/',
   '/index.html',
@@ -87,6 +87,43 @@ async function staleWhileRevalidate(request) {
     .catch(() => undefined);
   return cached || (await network) || Response.error();
 }
+
+self.addEventListener('push', (event) => {
+  let payload = { title: 'มีงานใหม่', body: 'เปิดแอปเพื่อดูรายละเอียด', url: '/driver.html' };
+  try {
+    payload = { ...payload, ...event.data.json() };
+  } catch (_error) {
+    // keep the default notification when the payload is empty
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: '/icon-192.png',
+      badge: '/favicon-32.png',
+      tag: payload.tag,
+      data: { url: payload.url || '/driver.html' },
+      vibrate: [200, 100, 200],
+      requireInteraction: true
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || '/driver.html';
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windows) => {
+        for (const client of windows) {
+          if (client.url.includes(new URL(target, self.location.origin).pathname)) {
+            return client.focus();
+          }
+        }
+        return self.clients.openWindow(target);
+      })
+  );
+});
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
