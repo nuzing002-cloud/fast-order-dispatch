@@ -35,6 +35,38 @@ async function text(page, selector) {
   return page.$eval(selector, (el) => el.textContent.trim()).catch(() => null);
 }
 
+const LOCAL = /^https?:\/\/(127\.0\.0\.1|localhost)(?=[:/]|$)/.test(BASE);
+
+async function request(path, options) {
+  const response = await fetch(`${BASE}${path}`, options);
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`${options?.method || 'GET'} ${path} failed: ${response.status} ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
+async function cleanupDriverAssignments() {
+  if (!LOCAL) return;
+  const payload = await request(`/drivers/${DRIVER}`);
+  for (const id of payload.driver?.assignedOrders ?? []) {
+    const { order } = await request(`/orders/${id}`);
+    const chain =
+      {
+        ASSIGNED: ['PICKED_UP', 'IN_DELIVERY', 'DELIVERED'],
+        PICKED_UP: ['IN_DELIVERY', 'DELIVERED'],
+        IN_DELIVERY: ['DELIVERED']
+      }[order.status] ?? [];
+    for (const status of chain) {
+      await request(`/orders/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+    }
+  }
+}
+
 async function run() {
   const browser = await puppeteer.launch({
     executablePath: CHROME,
@@ -47,6 +79,8 @@ async function run() {
   const results = {};
 
   try {
+    await cleanupDriverAssignments();
+
     // --- Home ---
     await open(page, errors, '/');
     await page.waitForFunction(() => document.getElementById('checkedAt')?.textContent !== '-', { timeout: 10000 });
@@ -107,7 +141,11 @@ async function run() {
     await page.click('#loadDriver');
     await page.waitForFunction(() => document.getElementById('driverCard')?.textContent.includes('Target Driver'), { timeout: 15000 });
     try {
-      await page.waitForFunction(() => document.getElementById('jobs')?.textContent.includes('order_'), { timeout: 20000 });
+      await page.waitForFunction(
+        (id) => document.getElementById('jobs')?.textContent.includes(id),
+        { timeout: 20000 },
+        orderId
+      );
     } catch (driverErr) {
       const dbg = await page.evaluate(() => ({
         driverCard: document.getElementById('driverCard')?.textContent.trim(),
@@ -119,29 +157,38 @@ async function run() {
       fail(`driver jobs timeout: ${JSON.stringify(dbg)}`);
     }
 
-    const advance = async (label, status) => {
-      await page.evaluate((needle) => {
-        const list = [...document.querySelectorAll('[data-next]')];
-        const target = list.find((button) => button.textContent.includes(needle)) || list[0];
-        if (!target) throw new Error(`no [data-next] for ${needle}`);
+    const advance = async (id, status) => {
+      await page.evaluate((targetId) => {
+        const target = document.querySelector(`[data-next][data-order="${targetId}"]`);
+        if (!target) throw new Error(`no [data-next] for ${targetId}`);
         target.click();
-      }, label);
+      }, id);
       await page.waitForFunction(
-        (next) =>
-          Boolean(document.querySelector(`#jobs .badge.status-${next}`)) ||
-          document.getElementById('driverCard')?.textContent.includes('พร้อมรับงาน'),
+        (targetId, next) => {
+          const card = [...document.querySelectorAll('#jobs .order-card')].find((el) =>
+            el.textContent.includes(targetId)
+          );
+          return Boolean(card?.querySelector(`.badge.status-${next}`));
+        },
         { timeout: 15000 },
+        id,
         status
       );
       await shot(page, `03-driver-${status.toLowerCase()}`);
     };
 
-    await advance('รับอาหารแล้ว', 'PICKED_UP');
-    await advance('เริ่มจัดส่ง', 'IN_DELIVERY');
-    await advance('ส่งสำเร็จ', 'DELIVERED');
+    await advance(orderId, 'PICKED_UP');
+    await advance(orderId, 'IN_DELIVERY');
+    await advance(orderId, 'DELIVERED');
 
-    // job should clear or show DELIVERED; driver back to AVAILABLE
-    await page.waitForFunction(() => document.getElementById('driverCard')?.textContent.includes('พร้อมรับงาน') || !document.getElementById('jobs')?.textContent.includes('กำลังส่ง'), { timeout: 15000 });
+    const delivered = await request(`/orders/${orderId}`);
+    if (delivered.order?.status !== 'DELIVERED') {
+      fail(`order ${orderId} is ${delivered.order?.status}, expected DELIVERED`);
+    }
+    await page.waitForFunction(
+      () => document.getElementById('driverCard')?.textContent.includes('พร้อมรับงาน'),
+      { timeout: 15000 }
+    );
     results.driver = { advanced: 'DELIVERED', errors: [...errors] };
 
     // --- Admin: order visible with delivery stats ---
@@ -168,6 +215,9 @@ async function run() {
       console.log('E2E PASS');
     }
   } finally {
+    await cleanupDriverAssignments().catch((cleanupErr) =>
+      console.error('cleanup failed:', cleanupErr.message)
+    );
     await browser.close();
   }
 }

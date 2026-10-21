@@ -5,7 +5,7 @@ Updated: 2026-10-22 (Asia/Bangkok)
 ## Current state
 
 - Branch: `main`, synced with `origin/main`
-- HEAD: `9e5b80f` ci: supply VAPID keys for container smoke test and always show logs
+- HEAD: latest commit on `main` (see `git log --oneline -1`)
 - CI: GitHub Actions green (`build-and-test` + `docker` smoke test)
 - Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL + Redis)
 - Server log: `/data/data/com.termux/files/usr/tmp/opencode/fod-server.log`
@@ -18,6 +18,7 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - Minimum delivery fee 28 THB (`MIN_DELIVERY_FEE`), enforced in API and UI
 - Production Docker/Caddy deployment files, prune script, OpenAPI docs
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
+- E2E harness: clears leftover driver assignments before each run, advances only the order under test, verifies `DELIVERED`, and cleans up in `finally`
 
 ## Verification (last run)
 
@@ -26,7 +27,8 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - `npm run build` pass
 - `npm test` 120 passed / 4 skipped (1 Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` E2E PASS (home, PWA, customer, driver, admin; no console errors)
-- GitHub Actions run `39658853440` success
+- Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
+- GitHub Actions run `39660234902` success
 
 ## Remaining
 
