@@ -97,6 +97,9 @@ jobs:
 
       - name: Smoke test image
         run: |
+          read -r VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY <<< "$(docker run --rm --entrypoint node fast-order-dispatch:ci -e \
+            "const webpush = require('web-push'); const keys = webpush.generateVAPIDKeys(); process.stdout.write(keys.publicKey + ' ' + keys.privateKey)")"
+          export VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY
           docker run -d --name fast-order-dispatch --network host \
             -e NODE_ENV=production \
             -e DATABASE_URL=postgres://dispatch:dispatch@127.0.0.1:5432/dispatch \
@@ -107,6 +110,8 @@ jobs:
             -e PAYMENT_PROVIDER=stripe \
             -e STRIPE_SECRET_KEY=sk_test_ci_smoke \
             -e STRIPE_WEBHOOK_SECRET=whsec_ci_smoke \
+            -e VAPID_PUBLIC_KEY \
+            -e VAPID_PRIVATE_KEY \
             fast-order-dispatch:ci
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:3000/ready && break
@@ -114,5 +119,11 @@ jobs:
           done
           curl -sf http://127.0.0.1:3000/health
           curl -sf -H "x-api-key: ci-smoke-token-0123456789" http://127.0.0.1:3000/drivers
-          docker logs fast-order-dispatch
-          docker rm -f fast-order-dispatch
+
+      - name: Show container logs
+        if: always()
+        run: docker logs fast-order-dispatch || true
+
+      - name: Remove container
+        if: always()
+        run: docker rm -f fast-order-dispatch || true
