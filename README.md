@@ -2,9 +2,12 @@
 
 Order dispatch service with batch processing, payment coordination, lifecycle tracking, realtime job management, and horizontally scalable PostgreSQL persistence.
 
+> Deployment scope: private use for Project ID `1388246780` only. Do not publish, share, or deploy for public/shared use.
+
 ## Features
 
 - Batches up to 4 orders and assigns them to the configured driver pool (default driver ID `1388246780`)
+- Minimum delivery fee of 28 THB per order (configurable via `MIN_DELIVERY_FEE`)
 - Dispatches only once the restaurant marks an order `READY`, nearest orders first
 - Keeps feeding queued orders to a busy driver that still has free capacity, so work continues before the last delivery finishes
 - Nearest-neighbour route optimization using Haversine distance
@@ -86,6 +89,7 @@ The console is an internal operations tool: it has no user accounts or server-si
 | `TRUST_PROXY` | unset | Set to `1`/`true` behind a reverse proxy |
 | `DISPATCH_DRIVER_IDS` | `1388246780` | Comma-separated drivers eligible for dispatch |
 | `DISPATCH_BATCH_SIZE` | `4` | Maximum orders per dispatch batch (1-50) |
+| `MIN_DELIVERY_FEE` | `28` | Minimum delivery fee per order in THB; lower values are rejected |
 | `DRIVER_SHARE_PERCENT` | `80` | Share of the delivery fee credited to the driver (0-100) |
 | `VAPID_PUBLIC_KEY` | unset | Web Push public key; required in production |
 | `VAPID_PRIVATE_KEY` | unset | Web Push private key; required in production |

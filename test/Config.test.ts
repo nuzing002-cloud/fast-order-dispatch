@@ -8,6 +8,7 @@ test('uses development defaults', () => {
   expect(config.rateLimitWindowMs).toBe(60_000);
   expect(config.dispatchDriverIds).toEqual([DISPATCH_DRIVER_ID]);
   expect(config.dispatchBatchSize).toBe(4);
+  expect(config.minDeliveryFee).toBe(28);
   expect(config.trustProxy).toBe(false);
   expect(config.databaseUrl).toBeUndefined();
   expect(config.dbPoolMax).toBe(10);
@@ -20,6 +21,7 @@ test('parses configured values', () => {
     RATE_LIMIT_WINDOW_MS: '1000',
     DISPATCH_DRIVER_IDS: ' a, b ,, c',
     DISPATCH_BATCH_SIZE: '6',
+    MIN_DELIVERY_FEE: '35',
     TRUST_PROXY: 'true',
     DATABASE_POOL_MAX: '4',
     DATABASE_SSL: 'true'
@@ -29,6 +31,7 @@ test('parses configured values', () => {
   expect(config.rateLimitWindowMs).toBe(1000);
   expect(config.dispatchDriverIds).toEqual(['a', 'b', 'c']);
   expect(config.dispatchBatchSize).toBe(6);
+  expect(config.minDeliveryFee).toBe(35);
   expect(config.trustProxy).toBe(true);
   expect(config.dbPoolMax).toBe(4);
   expect(config.databaseSsl).toBe(true);

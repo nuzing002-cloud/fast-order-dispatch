@@ -632,6 +632,11 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     '/orders',
     asyncHandler(async (request, response) => {
       const order = parseOrder(request.body);
+      if (order.deliveryFee < config.minDeliveryFee) {
+        throw new ValidationError(
+          `deliveryFee must be at least ${config.minDeliveryFee}`
+        );
+      }
       const paymentMethod = isRecord(request.body)
         ? optionalString(request.body.paymentMethod, 'paymentMethod')
         : undefined;

@@ -21,6 +21,7 @@ export interface AppConfig {
   rateLimitMax: number;
   dispatchDriverIds: string[];
   dispatchBatchSize: number;
+  minDeliveryFee: number;
   driverSharePercent: number;
   trustProxy: boolean;
   idempotencyTtlMs: number;
@@ -68,6 +69,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (dispatchBatchSize > 50) {
     throw new ValidationError('DISPATCH_BATCH_SIZE must be at most 50');
   }
+  const minDeliveryFee = boundedNumber(
+    env.MIN_DELIVERY_FEE,
+    28,
+    0,
+    10_000,
+    'MIN_DELIVERY_FEE'
+  );
 
   const paymentProvider = (env.PAYMENT_PROVIDER ?? 'mock').trim().toLowerCase();
   if (!['mock', 'http', 'stripe'].includes(paymentProvider)) {
@@ -97,6 +105,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     rateLimitMax,
     dispatchDriverIds,
     dispatchBatchSize,
+    minDeliveryFee,
     driverSharePercent: boundedNumber(env.DRIVER_SHARE_PERCENT, 80, 0, 100, 'DRIVER_SHARE_PERCENT'),
     trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',
     idempotencyTtlMs: integer(env.IDEMPOTENCY_TTL_MS, 86_400_000, 1_000, 'IDEMPOTENCY_TTL_MS'),

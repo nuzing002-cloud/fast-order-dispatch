@@ -84,26 +84,26 @@ test('accrues earnings on delivery and pays them out once', async () => {
 
   const earnings = await (await call(`/drivers/${driverId}/earnings`)).json();
   expect(earnings.currency).toBe('THB');
-  expect(earnings.pendingAmount).toBe(8);
+  expect(earnings.pendingAmount).toBe(22.4);
   expect(earnings.paidAmount).toBe(0);
   expect(earnings.earnings).toHaveLength(1);
   expect(earnings.earnings[0]).toMatchObject({
     driverId,
     orderId: 'earn-order',
-    amount: 8,
+    amount: 22.4,
     status: 'PENDING'
   });
 
   const payout = await post('/payouts', { driverId, method: 'promptpay' });
   expect(payout.status).toBe(201);
   const payoutBody = await payout.json();
-  expect(payoutBody.payout.amount).toBe(8);
+  expect(payoutBody.payout.amount).toBe(22.4);
   expect(payoutBody.payout.earningIds).toHaveLength(1);
   expect(payoutBody.payout.status).toBe('PAID');
 
   const after = await (await call(`/drivers/${driverId}/earnings`)).json();
   expect(after.pendingAmount).toBe(0);
-  expect(after.paidAmount).toBe(8);
+  expect(after.paidAmount).toBe(22.4);
   expect(after.payouts).toHaveLength(1);
   expect(after.earnings[0].status).toBe('PAID');
 

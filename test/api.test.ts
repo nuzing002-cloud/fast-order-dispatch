@@ -151,6 +151,13 @@ test('rejects invalid order payloads', async () => {
   });
   expect(emptyItems.status).toBe(400);
   expect((await emptyItems.json()).error).toContain('items must not be empty');
+
+  const lowFee = await post('/orders', {
+    ...makeOrder('low-fee'),
+    deliveryFee: 27
+  });
+  expect(lowFee.status).toBe(400);
+  expect((await lowFee.json()).error).toContain('deliveryFee must be at least 28');
 });
 
 test('runs the full order lifecycle over HTTP', async () => {

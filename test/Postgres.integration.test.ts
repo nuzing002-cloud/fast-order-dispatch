@@ -149,14 +149,14 @@ describePostgres('PostgreSQL integration', () => {
     }
 
     const before = await service.getDriverEarnings(driverId);
-    expect(before.pendingAmount).toBe(8);
+    expect(before.pendingAmount).toBe(22.4);
     expect(before.earnings).toHaveLength(1);
 
     const payout = await service.createPayout({ driverId, method: 'promptpay' });
-    expect(payout.amount).toBe(8);
+    expect(payout.amount).toBe(22.4);
     const after = await service.getDriverEarnings(driverId);
     expect(after.pendingAmount).toBe(0);
-    expect(after.paidAmount).toBe(8);
+    expect(after.paidAmount).toBe(22.4);
     expect(after.earnings[0]?.status).toBe('PAID');
     await expect(service.createPayout({ driverId })).rejects.toThrow('no pending earnings');
 

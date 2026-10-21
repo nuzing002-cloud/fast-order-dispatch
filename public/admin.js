@@ -378,8 +378,8 @@
             longitude: 100.5347
           },
           items: [{ id: `i_${suffix}`, name: 'ข้าวผัด', quantity: 1, price: 230 }],
-          totalAmount: 250,
-          deliveryFee: 20,
+          totalAmount: 258,
+          deliveryFee: 28,
           notes: 'ออเดอร์ตัวอย่าง'
         }
       });

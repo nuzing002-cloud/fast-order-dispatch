@@ -32,7 +32,7 @@ export function makeOrder(
     },
     items: [{ id: 'i1', name: 'Item', quantity: 1, price: totalAmount }],
     totalAmount,
-    deliveryFee: 10,
+    deliveryFee: 28,
     status: OrderStatus.PENDING,
     paymentStatus: PaymentStatus.PENDING,
     createdAt: new Date(),
