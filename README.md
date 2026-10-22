@@ -57,7 +57,18 @@ PGLITE_DATA_DIR=./data/pglite npm run dev
 ```
 
 The service listens on `HOST`/`PORT` from the environment (defaults to `0.0.0.0:3000`).
-Browse `http://127.0.0.1:3000/docs` for the interactive API reference.
+Browse `http://127.0.0.1:3000/docs` for the interactive API reference. From another device on the same network, use the host's LAN IP (for example `http://192.168.1.20:3000`).
+
+## Local always-on runtime (Termux)
+
+`scripts/local-supervisor.sh` keeps PostgreSQL, Redis, and the API running on this device. It starts the app from `dist/`, checks `/health`, restarts it after crashes, and starts the databases when they are down.
+
+```bash
+npm run build
+npm run supervisor
+```
+
+`~/.termux/boot/30-fast-order-dispatch.sh` starts the supervisor after a reboot and holds a wake lock; open Termux:Boot once after installing it. Logs live in `$PREFIX/tmp/opencode/` (`fod-supervisor.log`, `fod-server.log`, `fod-redis.log`).
 
 ## Web UI
 
@@ -485,6 +496,7 @@ Set `AUTO_PROCESS_INTERVAL_MS=500` to run a dispatch cycle twice per second. `PA
 | `npm run clean` | Remove the compiled `dist/` directory |
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm start` | Run the compiled server |
+| `npm run supervisor` | Keep PostgreSQL, Redis, and the API running (Termux/local host) |
 | `npm run dev` | Run from source with `ts-node` |
 | `npm run lint` | Run ESLint over `src/` and `test/` |
 | `npm run typecheck` | Type-check without emitting |

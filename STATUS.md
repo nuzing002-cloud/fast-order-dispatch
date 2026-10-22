@@ -1,5 +1,7 @@
 # Project Status
 
+Authoritative state: `PROJECT_STATE.md`
+
 Updated: 2026-10-22 (Asia/Bangkok)
 
 ## Current state
@@ -8,7 +10,9 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - HEAD: latest commit on `main` (see `git log --oneline -1`)
 - CI: GitHub Actions green (`build-and-test` + `docker` smoke test)
 - Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL + Redis)
-- Server log: `/data/data/com.termux/files/usr/tmp/opencode/fod-server.log`
+- Supervisor: running (`scripts/local-supervisor.sh`), restarts app and databases on failure
+- Reboot autostart: `~/.termux/boot/30-fast-order-dispatch.sh` (Termux:Boot installed)
+- Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis}.log`
 
 ## Completed
 
@@ -19,6 +23,7 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - Production Docker/Caddy deployment files, prune script, OpenAPI docs
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
 - E2E harness: clears leftover driver assignments before each run, advances only the order under test, verifies `DELIVERED`, and cleans up in `finally`
+- Local supervisor: health-checked app restart, PostgreSQL/Redis recovery, single-instance lock, Termux:Boot autostart with wake lock
 
 ## Verification (last run)
 
@@ -28,6 +33,7 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - `npm test` 120 passed / 4 skipped (1 Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` E2E PASS (home, PWA, customer, driver, admin; no console errors)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
+- Supervisor: killed app -> restarted automatically; stopped Redis -> auto-started; stopped PostgreSQL -> auto-started; duplicate supervisor exits via lock
 - GitHub Actions run `39660234902` success
 
 ## Remaining
@@ -41,7 +47,8 @@ Updated: 2026-10-22 (Asia/Bangkok)
 npm run lint && npm run typecheck && npm run build
 npm test
 node scripts/e2e-ui.js
-setsid nohup node dist/index.js >> /data/data/com.termux/files/usr/tmp/opencode/fod-server.log 2>&1 < /dev/null & disown
+npm run supervisor
+bash ~/.termux/boot/30-fast-order-dispatch.sh   # idempotent; safe to re-run
 ```
 
 ## Notes
@@ -49,3 +56,5 @@ setsid nohup node dist/index.js >> /data/data/com.termux/files/usr/tmp/opencode/
 - `.env` is gitignored and supplies local VAPID keys; production requires `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`.
 - Docker CI generates ephemeral VAPID keys; do not commit real keys.
 - Private use only for Project ID `1388246780`.
+- LAN access: `http://10.49.67.189:3000` (same network only); the boot hook lives outside the repo and requires the Termux:Boot app to be opened once.
+- The supervisor holds a wake lock installed by the boot hook; reboot behavior could not be tested without restarting the device.

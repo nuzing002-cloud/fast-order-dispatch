@@ -4,9 +4,11 @@ Order dispatch API. Private use for Project ID `1388246780` only.
 
 ## Session start
 
-1. Read `STATUS.md` and `git status` / `git log --oneline -5` before acting.
+1. Read `PROJECT_STATE.md` (authoritative), `STATUS.md`, and `git status` / `git log --oneline -5` before acting.
 2. Continue from the recorded state; do not re-investigate what is already documented.
 3. When the user says to finish, fix, or clear remaining work, do all of it without asking for confirmation and without stopping mid-way.
+4. Never treat a subtask (inspection, edit, build, or partial test) as project completion. Re-check the final goal and immediately continue with the next required step.
+5. Only report completion when the app starts, real flows pass, and no in-scope work remains; otherwise continue or state the verified external blocker.
 
 ## Stack
 
@@ -37,7 +39,7 @@ node scripts/e2e-ui.js   # requires the server on 127.0.0.1:3000 and Chromium
 
 Then:
 
-1. Update `STATUS.md` with the new state, verification results, and remaining work.
+1. Update `PROJECT_STATE.md` and `STATUS.md` with the new state, verification results, and remaining work.
 2. Commit with a concise conventional-commit message and push to `origin/main`.
 3. Watch CI with `gh run watch --exit-status`; fix failures until green.
 
