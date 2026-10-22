@@ -22,7 +22,7 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - Minimum delivery fee 28 THB (`MIN_DELIVERY_FEE`), enforced in API and UI
 - Production Docker/Caddy deployment files, prune script, OpenAPI docs
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
-- E2E harness: clears leftover driver assignments before each run, advances only the order under test, verifies `DELIVERED`, and cleans up in `finally`
+- E2E harness: creates an order, clicks READY in the admin UI (real dispatch), advances only that order through the driver UI to `DELIVERED`, verifies persistence in admin, and cleans up in `finally`
 - Local supervisor: health-checked app restart, PostgreSQL/Redis recovery, single-instance lock, Termux:Boot autostart with wake lock
 
 ## Verification (last run)
@@ -31,14 +31,15 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - `npm run typecheck` pass
 - `npm run build` pass
 - `npm test` 120 passed / 4 skipped (1 Postgres integration suite skipped without `TEST_DATABASE_URL`)
-- `node scripts/e2e-ui.js` E2E PASS (home, PWA, customer, driver, admin; no console errors)
+- `node scripts/e2e-ui.js` E2E PASS twice consecutively (home, PWA, admin READY -> dispatch, customer, driver -> DELIVERED, admin persistence; no console errors)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
-- Supervisor: killed app -> restarted automatically; stopped Redis -> auto-started; stopped PostgreSQL -> auto-started; duplicate supervisor exits via lock
-- GitHub Actions run `39724702773` success (commit `11fd438`); app restarted from latest build
+- Supervisor: app kill -> auto-restarted; Redis shutdown -> restarted with data dir `$PREFIX/tmp/opencode`; PostgreSQL reachable on 5432; duplicate supervisor exits via lock
+- GitHub Actions run `39725043765` success (commit `c441bee`)
 
 ## Remaining
 
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
+- Reboot autostart still needs a real reboot to confirm.
 - No code work is pending.
 
 ## Commands
@@ -58,3 +59,5 @@ bash ~/.termux/boot/30-fast-order-dispatch.sh   # idempotent; safe to re-run
 - Private use only for Project ID `1388246780`.
 - LAN access: `http://10.49.67.189:3000` (same network only); the boot hook lives outside the repo and requires the Termux:Boot app to be opened once.
 - The supervisor holds a wake lock installed by the boot hook; reboot behavior could not be tested without restarting the device.
+- Android may kill the supervisor under memory pressure (observed once while running Chromium E2E, alongside PostgreSQL/Redis). Re-run `npm run supervisor` to recover; it is idempotent.
+- Redis persistence now lives in `$PREFIX/tmp/opencode/fod-redis.rdb`, not the repo.

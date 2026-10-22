@@ -6,4 +6,5 @@ dist/
 !.env.production.example
 coverage/
 *.log
+*.rdb
 data/

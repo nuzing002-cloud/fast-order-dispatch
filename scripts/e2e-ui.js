@@ -114,22 +114,30 @@ async function run() {
     const orderId = orderBody.match(/order_[a-z0-9-]+/i)?.[0];
     if (!orderId) fail(`no order id in tracking: ${orderBody?.slice(0, 200)}`);
 
-    const beforeReady = await page.evaluate(async (id) => {
-      const response = await fetch(`/orders/${encodeURIComponent(id)}`);
-      return (await response.json()).order.status;
-    }, orderId);
-    if (beforeReady !== 'PENDING') fail(`order should wait for the restaurant, got ${beforeReady}`);
+    const pending = await request(`/orders/${orderId}`);
+    if (pending.order?.status !== 'PENDING') {
+      fail(`order should wait for the restaurant, got ${pending.order?.status}`);
+    }
 
-    const readyResponse = await page.evaluate(async (id) => {
-      const response = await fetch(`/orders/${encodeURIComponent(id)}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'READY' })
-      });
-      return { status: response.status, body: await response.json() };
-    }, orderId);
-    if (readyResponse.status !== 200) fail(`READY failed: ${JSON.stringify(readyResponse.body)}`);
-    if (readyResponse.body.order.status !== 'ASSIGNED') fail(`READY was not dispatched: ${readyResponse.body.order.status}`);
+    // --- Admin: click READY in the real UI; dispatch happens on the status transition ---
+    await open(page, errors, '/admin.html');
+    const readyButton = `#ordersBody [data-order="${orderId}"][data-status="READY"]`;
+    await page.waitForSelector(readyButton, { timeout: 20000 });
+    await page.$eval(readyButton, (button) => button.click());
+    await page.waitForFunction(
+      (id) => {
+        const row = document.querySelector(`#ordersBody [data-order="${id}"]`)?.closest('tr');
+        return Boolean(row?.querySelector('.badge.status-ASSIGNED'));
+      },
+      { timeout: 20000 },
+      orderId
+    );
+    const ready = await request(`/orders/${orderId}`);
+    if (ready.order?.status !== 'ASSIGNED') {
+      fail(`READY click did not dispatch the order: ${ready.order?.status}`);
+    }
+    results.adminReady = { orderId, status: ready.order.status, errors: [...errors] };
+    await shot(page, '02-admin-ready');
 
     results.customer = { orderId, errors: [...errors] };
     await shot(page, '02-customer-order');
@@ -168,7 +176,8 @@ async function run() {
           const card = [...document.querySelectorAll('#jobs .order-card')].find((el) =>
             el.textContent.includes(targetId)
           );
-          return Boolean(card?.querySelector(`.badge.status-${next}`));
+          if (!card) return next === 'DELIVERED';
+          return Boolean(card.querySelector(`.badge.status-${next}`));
         },
         { timeout: 15000 },
         id,
@@ -191,17 +200,31 @@ async function run() {
     );
     results.driver = { advanced: 'DELIVERED', errors: [...errors] };
 
-    // --- Admin: order visible with delivery stats ---
+    // --- Admin: the same order is persisted and shows DELIVERED ---
     await open(page, errors, '/admin.html');
-    await page.waitForFunction(() => document.getElementById('ordersTable')?.textContent.includes('order_') || document.body.textContent.includes('DELIVERED') || document.body.textContent.includes('ส่งสำเร็จ'), { timeout: 20000 });
+    await page.waitForFunction(
+      (id) => {
+        const row = document.querySelector(`#ordersBody [data-refund="${id}"]`)?.closest('tr');
+        return Boolean(row?.querySelector('.badge.status-DELIVERED'));
+      },
+      { timeout: 20000 },
+      orderId
+    );
     results.admin = { sawDelivered: true, errors: [...errors] };
     await shot(page, '04-admin');
 
-    const allErrors = [...results.home.errors, ...results.customer.errors, ...results.driver.errors, ...results.admin.errors];
+    const allErrors = [
+      ...results.home.errors,
+      ...results.adminReady.errors,
+      ...results.customer.errors,
+      ...results.driver.errors,
+      ...results.admin.errors
+    ];
     const summary = {
       ok: allErrors.length === 0,
       baseUrl: BASE,
       orderId: results.customer.orderId,
+      readyStatus: results.adminReady.status,
       pwa: results.pwa,
       consoleErrors: allErrors,
       shotsDir: OUT

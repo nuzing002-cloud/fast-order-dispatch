@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-22 11:55 Asia/Bangkok
+Updated: 2026-10-22 13:15 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -20,18 +20,18 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | 7 | Reboot autostart (Termux:Boot + wake lock) | IN_PROGRESS | `~/.termux/boot/30-fast-order-dispatch.sh` installed and executed manually; real reboot test not performed |
 | 8 | Accessible from localhost and same LAN | VERIFIED_COMPLETE | `http://127.0.0.1:3000/health` 200; `http://10.49.67.189:3000/health` 200 |
 | 9 | No stale test orders blocking driver capacity | VERIFIED_COMPLETE | Driver `AVAILABLE`, 0 assigned, accepts new orders |
-| 10 | Deterministic self-cleaning E2E | VERIFIED_COMPLETE | Targets the order under test, verifies DELIVERED, cleans up in `finally`; commit `1c6aed3` |
+| 10 | Deterministic self-cleaning E2E | VERIFIED_COMPLETE | Creates an order, clicks READY in the admin UI, drives the same order to DELIVERED by UI, verifies persistence, cleans up in `finally`; two consecutive PASS runs |
 | 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Runs `39724702773` (`11fd438`) and `39724903243` (`74e6c21`) both success |
 | 12 | Documentation for install/run/maintenance | VERIFIED_COMPLETE | `README.md`, `AGENTS.md`, `STATUS.md`, this file |
 | 13 | Production deployment to a public host | BLOCKED | Requires server/host, domain, TLS origin, real API keys, payment credentials, VAPID keys, and hosting cost |
 
 ## Current runtime
 
-- Branch `main`, implementation commit `11fd438`; this state file is updated in the following docs commit.
-- Server: PID 7845, `node dist/index.js`, port 3000, restarted from the latest build at 2026-10-22 11:52.
-- Supervisor: PID 32696, `scripts/local-supervisor.sh`.
-- PostgreSQL: port 5432 (auto-recovered).
-- Redis: 127.0.0.1:6379 (auto-recovered).
+- Branch `main`, HEAD `c441bee`; the E2E/supervisor fixes described below are in the following commit.
+- Server: PID 1943, `node dist/index.js`, port 3000, built and restarted at 2026-10-22 13:13.
+- Supervisor: PID 3164, `scripts/local-supervisor.sh` (restarted to load the Redis data-dir change).
+- PostgreSQL: PID 32395, port 5432.
+- Redis: PID 3200, 127.0.0.1:6379, data dir `$PREFIX/tmp/opencode` (`fod-redis.rdb`), outside the repo.
 - Logs: `$PREFIX/tmp/opencode/fod-server.log`, `fod-supervisor.log`, `fod-redis.log`, `fod-boot.log`.
 - Boot hook: `~/.termux/boot/30-fast-order-dispatch.sh` -> `scripts/termux-boot.sh` (outside repo; executed manually).
 - LAN URL: `http://10.49.67.189:3000` (same network only).
@@ -42,27 +42,17 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - `npm run typecheck` PASS (exit 0)
 - `npm run build` PASS (exit 0, `dist/index.js` regenerated)
 - `npm test` 120 passed / 4 skipped (1 suite skipped: Postgres integration without `TEST_DATABASE_URL`)
-- `node scripts/e2e-ui.js` E2E PASS, no console errors
-- Supervisor recovery tests PASS:
-  - `kill <app>` -> new PID 334, `/health` ok
-  - stop Redis -> `PONG` again
-  - `pg_ctl stop -m fast` -> `accepting connections` again
-  - second supervisor invocation exits 0 (flock)
-- GitHub Actions run `39724702773` success on commit `11fd438` (build-and-test + docker)
-- GitHub Actions run `39724903243` success on docs commit `74e6c21` (build-and-test + docker)
-- App restarted from the latest `dist/` after commit; new PID 7845, `/health` ok
+- `node scripts/e2e-ui.js` E2E PASS twice consecutively after the harness fixes (latest order `order_b0fa16e6...`, admin READY -> ASSIGNED, UI -> DELIVERED, no console errors)
+- Supervisor recovery: app kill -> restarted automatically (`/health` ok); Redis shutdown -> restarted in 20s with data dir `$PREFIX/tmp/opencode`; PostgreSQL reachable on 5432
+- GitHub Actions run `39725043765` success on commit `c441bee` (build-and-test + docker)
 
 ## Files changed in this batch
 
-- `scripts/local-supervisor.sh` — process/service supervisor
-- `scripts/termux-boot.sh` — boot entrypoint (wake lock + supervisor)
-- `scripts/e2e-ui.js` — deterministic driver flow and cleanup
-- `package.json` — `npm run supervisor`
-- `README.md` — Termux always-on runtime docs
-- `AGENTS.md` — autonomous execution rules
+- `scripts/e2e-ui.js` — clicks READY in the real admin UI, scopes admin assertions to the order under test, tolerates the driver card disappearing after DELIVERED, uses a DOM click for the horizontally scrolled table button
+- `scripts/local-supervisor.sh` — Redis data dir moved to `$PREFIX/tmp/opencode` (`fod-redis.rdb`) so dumps stay out of the repo
+- `.gitignore` — ignore `*.rdb`
 - `STATUS.md` — short status summary
 - `PROJECT_STATE.md` — this file
-- `~/.termux/boot/30-fast-order-dispatch.sh` — Termux:Boot wrapper (outside repo)
 
 ## Known limitations
 
@@ -72,8 +62,10 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - Payments use the mock provider; no real charges.
 - Driver rating stays `0.0/5` because no rating-capture workflow exists.
 - The PostgreSQL integration Jest suite is skipped locally unless `TEST_DATABASE_URL` is set; CI runs it.
+- Android can kill the supervisor itself under memory pressure: at 13:09 the supervisor, PostgreSQL, and Redis stopped while the app kept running. Manual supervisor restart recovered every service in under 20s, but Termux has no guaranteed respawn without root or a foreground service. Running Chromium (E2E) on this device increases memory pressure.
 
 ## Next actions
 
 1. On the next natural reboot, confirm the supervisor and app come back automatically; if not, inspect `fod-boot.log` and Android battery restrictions.
-2. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
+2. Avoid running Chromium E2E while the device is under memory pressure; if the supervisor disappears, re-run `npm run supervisor` (idempotent via flock).
+3. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.

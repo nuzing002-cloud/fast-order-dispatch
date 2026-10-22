@@ -42,7 +42,7 @@ ensure_redis() {
     return
   fi
   log "starting redis"
-  redis-server --daemonize yes --bind 127.0.0.1 --port 6379 --logfile "$REDIS_LOG" >>"$SUPERVISOR_LOG" 2>&1 9>&- || log "redis start failed"
+  redis-server --daemonize yes --bind 127.0.0.1 --port 6379 --dir "$LOG_DIR" --dbfilename fod-redis.rdb --logfile "$REDIS_LOG" >>"$SUPERVISOR_LOG" 2>&1 9>&- || log "redis start failed"
 }
 
 app_running() {
