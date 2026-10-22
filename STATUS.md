@@ -34,7 +34,7 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - `node scripts/e2e-ui.js` E2E PASS twice consecutively (home, PWA, admin READY -> dispatch, customer, driver -> DELIVERED, admin persistence; no console errors)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
 - Supervisor: app kill -> auto-restarted; Redis shutdown -> restarted with data dir `$PREFIX/tmp/opencode`; PostgreSQL reachable on 5432; duplicate supervisor exits via lock
-- GitHub Actions run `39725043765` success (commit `c441bee`)
+- GitHub Actions run `39732959736` success (fix commit `76f5b9c`)
 
 ## Remaining
 

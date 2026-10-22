@@ -27,7 +27,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Current runtime
 
-- Branch `main`, HEAD `c441bee`; the E2E/supervisor fixes described below are in the following commit.
+- Branch `main`, fix commit `76f5b9c`.
 - Server: PID 1943, `node dist/index.js`, port 3000, built and restarted at 2026-10-22 13:13.
 - Supervisor: PID 3164, `scripts/local-supervisor.sh` (restarted to load the Redis data-dir change).
 - PostgreSQL: PID 32395, port 5432.
@@ -44,7 +44,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - `npm test` 120 passed / 4 skipped (1 suite skipped: Postgres integration without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` E2E PASS twice consecutively after the harness fixes (latest order `order_b0fa16e6...`, admin READY -> ASSIGNED, UI -> DELIVERED, no console errors)
 - Supervisor recovery: app kill -> restarted automatically (`/health` ok); Redis shutdown -> restarted in 20s with data dir `$PREFIX/tmp/opencode`; PostgreSQL reachable on 5432
-- GitHub Actions run `39725043765` success on commit `c441bee` (build-and-test + docker)
+- GitHub Actions run `39732959736` success on fix commit `76f5b9c` (build-and-test + docker)
 
 ## Files changed in this batch
 
