@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-22 11:53 Asia/Bangkok
+Updated: 2026-10-22 11:55 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -21,7 +21,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | 8 | Accessible from localhost and same LAN | VERIFIED_COMPLETE | `http://127.0.0.1:3000/health` 200; `http://10.49.67.189:3000/health` 200 |
 | 9 | No stale test orders blocking driver capacity | VERIFIED_COMPLETE | Driver `AVAILABLE`, 0 assigned, accepts new orders |
 | 10 | Deterministic self-cleaning E2E | VERIFIED_COMPLETE | Targets the order under test, verifies DELIVERED, cleans up in `finally`; commit `1c6aed3` |
-| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Run `39724702773` success on commit `11fd438` |
+| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Runs `39724702773` (`11fd438`) and `39724903243` (`74e6c21`) both success |
 | 12 | Documentation for install/run/maintenance | VERIFIED_COMPLETE | `README.md`, `AGENTS.md`, `STATUS.md`, this file |
 | 13 | Production deployment to a public host | BLOCKED | Requires server/host, domain, TLS origin, real API keys, payment credentials, VAPID keys, and hosting cost |
 
@@ -49,6 +49,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
   - `pg_ctl stop -m fast` -> `accepting connections` again
   - second supervisor invocation exits 0 (flock)
 - GitHub Actions run `39724702773` success on commit `11fd438` (build-and-test + docker)
+- GitHub Actions run `39724903243` success on docs commit `74e6c21` (build-and-test + docker)
 - App restarted from the latest `dist/` after commit; new PID 7845, `/health` ok
 
 ## Files changed in this batch
@@ -74,6 +75,5 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Next actions
 
-1. Commit/push this state update and confirm the docs-only CI run stays green.
-2. On the next natural reboot, confirm the supervisor and app come back automatically; if not, inspect `fod-boot.log` and Android battery restrictions.
-3. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
+1. On the next natural reboot, confirm the supervisor and app come back automatically; if not, inspect `fod-boot.log` and Android battery restrictions.
+2. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
