@@ -34,7 +34,7 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - `node scripts/e2e-ui.js` E2E PASS (home, PWA, customer, driver, admin; no console errors)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
 - Supervisor: killed app -> restarted automatically; stopped Redis -> auto-started; stopped PostgreSQL -> auto-started; duplicate supervisor exits via lock
-- GitHub Actions run `39660234902` success
+- GitHub Actions run `39724702773` success (commit `11fd438`); app restarted from latest build
 
 ## Remaining
 
