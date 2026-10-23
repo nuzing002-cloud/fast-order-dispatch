@@ -2,16 +2,16 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-23 21:10 (Asia/Bangkok)
+Updated: 2026-10-23 21:22 (Asia/Bangkok)
 
 ## Current state
 
 - Branch: `main`, synced with `origin/main`
-- Verified code HEAD: `f3bc5ea` (`fix: refresh cached notification feed in installed PWA`)
-- CI: run `40024595943` green
-- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 8981
+- Verified code HEAD: `7290aea` (`fix: stabilize bridge freshness and driver tracking`)
+- CI: run `40025025770` green
+- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 16958
 - Supervisor: running detached (`scripts/local-supervisor.sh`), PID 8965; restarts app and databases on failure
-- Shopee bridge: `http://127.0.0.1:4020` connected read-only, `reachable=true`, 15s polling, 32 orders / 42 events, heatmap PNG available
+- Shopee bridge: `http://127.0.0.1:4020` reachable, ADB ready, auto-accept enabled, 15s polling, 10 offer records; classifier now excludes ordinary order-related notifications
 - Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` restored and manually exercised; bridge hook also installed
 - LAN URL: `http://10.38.25.243:3000` (dynamic address)
 - Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis,boot}.log`
@@ -25,6 +25,7 @@ Updated: 2026-10-23 21:10 (Asia/Bangkok)
 - Shopee Food Driver navigation handoff: `/shopee-driver.html` plus `/integrations/shopee-driver/links` and `/integrations/shopee-driver/deep-link` (navigation-only, no private API or order sync)
 - Read-only Shopee bridge integration: `/integrations/shopee-bridge/{status,sync,screenshot}` and `/webhooks/shopee-bridge`; typed client/service, HMAC or loopback-only webhook, event dedupe, screenshot validation, admin panel, no open/accept proxy routes
 - Unified Shopee activity feed: order notifications and regular notifications appear together in time order; linked orders are enriched with order details and rendered once
+- Bridge console uses the same combined chronological feed; only explicit new-offer notifications can trigger its auto-accept path, and startup does not replay old notifications
 - Web console API-key bootstrap (`?api_key=`/`#api_key=`) with validation and URL cleanup
 - Production Docker/Caddy deployment files, prune script, OpenAPI docs
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
@@ -37,23 +38,27 @@ Updated: 2026-10-23 21:10 (Asia/Bangkok)
 - `npm run typecheck` pass
 - `npm run build` pass
 - `npm test -- --runInBand` 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
-- `node scripts/e2e-ui.js` E2E PASS; latest order `order_248cbcae-03f3-4357-a689-1b02ee81207e` DELIVERED, `consoleErrors: []`
+- `node scripts/e2e-ui.js` E2E PASS; latest order `order_b7edc9c6-ffad-44b3-b610-2222fd89bcb8` DELIVERED, `consoleErrors: []`
 - Browser fixture confirms one linked order notification and one ordinary notification appear together as two cards without duplicating the order
+- Bridge-console fixture confirms an offer and ordinary notification in one table with no duplicated order number; classifier checks reject customer messages and pickup-ready notices
+- Live bridge order list was reduced from 32 false-positive-inclusive records to 10 offer records; health and ADB remained available after restart
 - Live browser rendered the bridge activity and upgraded the service-worker cache from the old version to `fod-v5`
-- Separate pre-existing local edits to bridge/config/driver files remain uncommitted and were not included in this fix
+- Simulated driver geolocation test passed through permission, watch, API persistence, and stop; saved driver coordinates were restored afterward
+- Supervisor restart test passed after terminating the app; `/health` recovered and driver was `AVAILABLE` with zero assigned jobs
 - Bridge live: status 200 read-only/reachable, sync 200, screenshot 200 `image/png` 653301 bytes, webhook dedupe `duplicates=1`, open/accept routes 404
 - Shopee deep-link endpoint live check -> 200 (`foody://driver/rn/@shopee-rn/main/TRANSACTIONS`)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
 - Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock; boot hook re-run kept a single supervisor
 - LAN health check -> 200 on `http://10.38.25.243:3000/health`
-- GitHub Actions run `40024595943` success (commit `f3bc5ea`)
+- GitHub Actions run `40025025770` success (commit `7290aea`)
 
 ## Remaining
 
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
 - Real reboot test for the FOD and bridge boot hooks (installed and exercised manually, but no reboot performed).
 - Shopee order/status synchronization is out of scope for the read-only bridge handoff; it needs an authorized Shopee Partner API/webhook plus order matching, duplicate detection, and confirmation before any write action.
-- Bridge events currently mirror auto-accept failures and do not carry fare/order numbers until the bridge successfully accepts a job; the screenshot depends on the bridge area check.
+- Six historical offer records still show `accept control not found`. No live offer was available to verify the accept control after the classifier fix, so successful auto-accept is not yet confirmed.
+- Bridge source is outside the FOD Git worktree; its current changes are local and not pushed.
 
 ## Commands
 

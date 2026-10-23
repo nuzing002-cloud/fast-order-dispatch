@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-23 21:10 Asia/Bangkok
+Updated: 2026-10-23 21:22 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -21,24 +21,26 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | 8 | Accessible from localhost and same LAN | VERIFIED_COMPLETE | `http://127.0.0.1:3000/health` 200; `http://10.38.25.243:3000/health` 200 (LAN IP is dynamic) |
 | 9 | No stale test orders blocking driver capacity | VERIFIED_COMPLETE | Driver `AVAILABLE`, 0 assigned, accepts new orders after E2E |
 | 10 | Deterministic self-cleaning E2E | VERIFIED_COMPLETE | Creates an order, clicks READY in the admin UI, drives the same order to DELIVERED by UI, verifies persistence, cleans up in `finally`; latest run `order_dc041782-...` PASS with zero console errors |
-| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Run `40024595943` on `f3bc5ea` success |
+| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Run `40025025770` on `7290aea` success |
 | 12 | Documentation for install/run/maintenance | VERIFIED_COMPLETE | `README.md`, `AGENTS.md`, `STATUS.md`, this file |
 | 13 | Production deployment to a public host | BLOCKED | Requires server/host, domain, TLS origin, real API keys, payment credentials, VAPID keys, and hosting cost |
 | 14 | Shopee Food Driver navigation handoff (`/shopee-driver.html`, `/integrations/shopee-driver/{links,deep-link}`) | VERIFIED_COMPLETE | API tests (`navigation-only`, 4 destinations, 400 on unknown), page served, live curl 200; no private Shopee API or order sync |
-| 15 | Read-only Shopee bridge integration on port 4020 (status/orders/events/screenshot + optional webhook) | VERIFIED_COMPLETE | `ShopeeBridgeClient`/`ShopeeBridgeService`, API + UI tests, live 4020 sync and screenshot 200; no open/accept proxy routes |
-| 16 | Show incoming order notifications and regular notifications in one Shopee activity feed | VERIFIED_COMPLETE | Admin UI fixture and live bridge view verified; cache bumped to `fod-v5` so installed PWAs receive the updated feed |
+| 15 | Shopee bridge integration on port 4020 (status/orders/events/screenshot + optional webhook) | VERIFIED_COMPLETE | `ShopeeBridgeClient`/`ShopeeBridgeService`, API + UI tests, live 4020 sync and screenshot 200; FOD remains read-only |
+| 16 | Show incoming order notifications and regular notifications in one Shopee activity feed | VERIFIED_COMPLETE | Admin and bridge-console browser fixtures show both together; linked orders appear once; PWA cache is `fod-v5` |
+| 17 | Distinguish actionable new offers from ordinary order-related notifications | VERIFIED_COMPLETE | Explicit offer classifier filters 22 false order records, suppresses startup replay, and limits auto-accept to new offers |
 
 ## Current runtime
 
-- Branch `main`, HEAD `f3bc5ea` (`fix: refresh cached notification feed in installed PWA`), pushed to `origin/main`.
-- Server: PID 8981, `node dist/index.js`, port 3000, started by detached supervisor at 21:06; `dist/` rebuilt from current sources.
+- Branch `main`, HEAD `7290aea` (`fix: stabilize bridge freshness and driver tracking`), pushed to `origin/main`.
+- Server: PID 16958, `node dist/index.js`, port 3000, restarted by the detached supervisor after a controlled stop; built from current sources.
 - Supervisor: PID 8965, `scripts/local-supervisor.sh` (app/PostgreSQL/Redis health loop).
 - PostgreSQL: PID 5971, port 5432.
 - Redis: PID 30796, 127.0.0.1:6379, data dir `$PREFIX/tmp/opencode` (`fod-redis.rdb`), outside the repo.
 - Logs: `$PREFIX/tmp/opencode/fod-server.log`, `fod-supervisor.log`, `fod-redis.log`, `fod-boot.log`.
 - Boot hooks: `~/.termux/boot/30-fast-order-dispatch.sh` (restored at 19:14, FOD after 5s) and `shopee-bridge.sh` (bridge after 45s); the FOD supervisor uses a lock so duplicate launches exit.
 - LAN URL: `http://10.38.25.243:3000` (same network only; the address changes with the mobile network).
-- Shopee bridge: `http://127.0.0.1:4020`, connected read-only, ADB ready, polling every 15s; latest live snapshot had 32 orders and 42 events.
+- Shopee bridge: `http://127.0.0.1:4020`, ADB ready, auto-accept enabled, polling every 15s; latest snapshot has 10 offer records and 2 current bridge events.
+- Shopee bridge supervisor/app: PIDs 27070/5545; bridge source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree).
 - Shopee handoff: `http://127.0.0.1:3000/shopee-driver.html`; API endpoints require `x-api-key` when `API_KEYS` is configured.
 - Admin bridge panel: `http://127.0.0.1:3000/admin.html` (unified chronological Shopee order/notification feed, bridge status, heatmap screenshot).
 
@@ -48,17 +50,21 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - `npm run typecheck` PASS (exit 0)
 - `npm run build` PASS (exit 0, `dist/` regenerated)
 - `npm test -- --runInBand` PASS: 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration without `TEST_DATABASE_URL`).
-- `node scripts/e2e-ui.js` PASS: latest order `order_b7edc9c6-ffad-44b3-b610-2222fd89bcb8`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`.
+- `node scripts/e2e-ui.js` PASS: order `order_b7edc9c6-ffad-44b3-b610-2222fd89bcb8`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`.
 - Unified feed browser fixture PASS with live Shopee data (10 activity cards); installed browser cache contains only `fod-v5`.
+- Bridge console fixture PASS: one linked new offer and one regular notification appear in one time-sorted table, order number displayed once.
+- Bridge classifier checks PASS: explicit new-order phrases match; customer messages, pickup-ready notices, and routine driver notifications do not.
+- Bridge order list dropped from 32 to 10 after filtering false order classifications; a safe supervisor restart preserved ADB connectivity and the enabled auto-accept setting.
+- Driver location tracking browser test PASS (geolocation permission/watch, API update, stop); original driver coordinates restored.
 - `/push/public-key` returns HTTP 200 with a configured key; live bridge status is reachable/fresh and ADB is ready.
-- Live bridge status: `configured=true`, `capability=read-only`, `reachable=true`, `lastError=null`, 32 orders, 42 events, screenshot available.
+- Live bridge status: `configured=true`, `capability=read-only`, `reachable=true`, `lastError=null`, 10 offer records, ADB ready, screenshot available.
 - Live screenshot: `GET /integrations/shopee-bridge/screenshot` -> 200 `image/png`, 653301 bytes.
 - Live webhook: loopback POST -> `{ok:true,received:1,duplicates:0}`; repeat -> `duplicates:1`.
 - Live command-route check: `/integrations/shopee-bridge/open` and `/accept` -> 404 (no write proxy exposed).
 - Driver after E2E: `AVAILABLE`, `assignedOrders=[]`, `acceptsNewOrders=true`.
-- Detached supervisor and app remain running (PIDs 8965 and 8981); `/health` returned HTTP 200 after E2E.
+- Controlled app termination recovered automatically; supervisor and app remain running (PIDs 8965 and 16958), `/health` HTTP 200, driver `AVAILABLE` with no assigned jobs.
 - LAN health check on the new address: `http://10.38.25.243:3000/health` 200.
-- GitHub Actions run `40024595943` success on `f3bc5ea`.
+- GitHub Actions run `40025025770` success on `7290aea`.
 
 ## Files changed in this batch
 
@@ -67,6 +73,12 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - `src/index.ts` — `/integrations/shopee-bridge/{status,sync,screenshot}` and HMAC/loopback-limited `/webhooks/shopee-bridge`; lifecycle start/stop and startup log flags
 - `src/config.ts` — `SHOPEE_BRIDGE_URL`, `SHOPEE_BRIDGE_SYNC_MS`, `SHOPEE_BRIDGE_TIMEOUT_MS`, `SHOPEE_BRIDGE_WEBHOOK_SECRET` parsing/validation
 - `public/admin.html`, `public/admin.js`, `public/styles.css` — Thai admin panel for bridge connection, ADB state, unified Shopee order/notification activity, heatmap, manual sync
+- `public/driver.html`, `public/driver.js` — foreground location tracking with explicit start/stop and throttled updates
+- `public/sw.js` — `fod-v5` cache invalidates stale installed-PWA assets
+- `/data/data/com.termux/files/home/shopee-bridge/server.js` — classify only explicit new offers for auto-accept/voice alerts, avoid ambiguous notification taps, suppress startup replay, and hide legacy false-order records
+- `/data/data/com.termux/files/home/shopee-bridge/console.html` — combine order details and regular notifications in a single chronological activity table
+- `scripts/local-supervisor.sh` — avoids inheriting unsupported database override environment variables
+- `src/config.ts`, `src/integrations/ShopeeBridgeService.ts` — configurable bridge freshness and offline/stale reporting
 - `PROJECT_STATE.md`, `STATUS.md` — updated verification and unified-feed state
 - `public/sw.js` — cache `fod-v5` to invalidate stale installed-PWA assets
 - `src/openapi.ts` — documents the four bridge endpoints
@@ -81,7 +93,8 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - Production deploy not performed: no host/domain/credentials; cannot be completed without those external inputs.
 - Reboot autostart is installed but not verified by an actual reboot; Termux:Boot must be opened once and Android battery settings may affect it. The FOD hook had been left disabled during bridge setup and was restored in this batch.
 - The Shopee integration is strictly read-only: bridge events and orders are displayed only and never create/assign/accept orders in this system. Real order sync needs an authorized Shopee Partner API/webhook plus an order-match/confirmation flow.
-- Bridge events currently reflect the bridge's auto-accept attempts (including `auto-accept-failed`), not successful Shopee orders. The two live orders have no `orderNo`/fare because automatic accept failed.
+- Six historical offer records still show `accept control not found`; no active new offer was available to validate the actual accept gesture after tightening classification. Do not treat auto-accept as verified until an authorized live offer reaches the matching UI control.
+- Bridge changes above are local only because `shopee-bridge` is not a Git worktree; they are running under its supervisor but cannot be pushed with the FOD repository.
 - The heatmap appears only after the bridge's area check has produced `/area/latest.png`; bridge data is cached in memory and re-polled after a restart.
 - Without `SHOPEE_BRIDGE_WEBHOOK_SECRET`, the webhook accepts loopback sources only; with a secret, senders must HMAC-sign the raw body.
 - LAN access uses HTTP and the LAN IP is dynamic; service workers/push install on other devices require a secure context (HTTPS or localhost). `127.0.0.1` PWA works.
