@@ -7,8 +7,8 @@ Updated: 2026-10-23 (Asia/Bangkok)
 ## Current state
 
 - Branch: `main`, synced with `origin/main`
-- HEAD: latest commit on `main` (see `git log --oneline -1`)
-- CI: GitHub Actions green (`build-and-test` + `docker` smoke test)
+- HEAD: `4ab0e65` (`feat: add Shopee driver navigation handoff`)
+- CI: GitHub Actions run `39926659575` green (`build-and-test` + `docker` smoke test)
 - Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL + Redis)
 - Supervisor: running (`scripts/local-supervisor.sh`), restarts app and databases on failure
 - Reboot autostart: `~/.termux/boot/30-fast-order-dispatch.sh` (Termux:Boot installed)
@@ -37,11 +37,10 @@ Updated: 2026-10-23 (Asia/Bangkok)
 - Shopee deep-link endpoint live check -> 200 (`foody://driver/rn/@shopee-rn/main/TRANSACTIONS`)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
 - Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock
-- GitHub Actions run `39732959736` success (prior fix commit `76f5b9c`); CI for this batch watched after push
+- GitHub Actions run `39926659575` success (commit `4ab0e65`)
 
 ## Remaining
 
-- Commit/push the Shopee handoff batch and confirm CI is green.
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
 - Reboot autostart still needs a real reboot to confirm.
 - Shopee order/status synchronization is out of scope for the deep-link handoff; it needs an authorized Shopee Partner API/webhook.

@@ -28,7 +28,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Current runtime
 
-- Branch `main`; last pushed commit `d78e723`, Shopee handoff changes in this batch.
+- Branch `main`, HEAD `4ab0e65` (Shopee handoff, pushed).
 - Server: PID 5724, `node dist/index.js`, port 3000, built 2026-10-23 15:39 and started by the supervisor at 15:40.
 - Supervisor: PID 5707, `scripts/local-supervisor.sh` (started 2026-10-23 15:40; app/PostgreSQL/Redis health loop).
 - PostgreSQL: PID 27117 (plus workers), port 5432.
@@ -48,7 +48,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - Live Shopee endpoint check: `GET /integrations/shopee-driver/deep-link?destination=transactions` -> 200 with `foody://driver/rn/@shopee-rn/main/TRANSACTIONS`
 - Driver after E2E: `AVAILABLE`, `assignedOrders=[]`, `acceptsNewOrders=true`
 - Supervisor restarted the app after `pkill` and `/health` returned 200 (`storage=postgres`, `redis=true` in the startup log)
-- GitHub Actions run `39732959736` success on prior commit `76f5b9c`; CI for this batch is watched after push
+- GitHub Actions run `39926659575` success on `4ab0e65` (`build-and-test` + `docker` smoke test)
 
 ## Files changed in this batch
 
@@ -79,7 +79,6 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Next actions
 
-1. Commit and push this batch, then watch GitHub Actions until both `build-and-test` and `docker` are green.
-2. On the next natural reboot, confirm the supervisor and app come back automatically; if not, inspect `fod-boot.log` and Android battery restrictions.
-3. Avoid running Chromium E2E while the device is under memory pressure; if the supervisor disappears, re-run `npm run supervisor` (idempotent via flock).
-4. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
+1. On the next natural reboot, confirm the supervisor and app come back automatically; if not, inspect `fod-boot.log` and Android battery restrictions.
+2. Avoid running Chromium E2E while the device is under memory pressure; if the supervisor disappears, re-run `npm run supervisor` (idempotent via flock).
+3. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
