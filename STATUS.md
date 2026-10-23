@@ -2,16 +2,16 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-23 21:22 (Asia/Bangkok)
+Updated: 2026-10-24 06:05 (Asia/Bangkok)
 
 ## Current state
 
 - Branch: `main`, synced with `origin/main`
-- Verified code HEAD: `7290aea` (`fix: stabilize bridge freshness and driver tracking`)
-- CI: run `40025025770` green
-- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 16958
-- Supervisor: running detached (`scripts/local-supervisor.sh`), PID 8965; restarts app and databases on failure
-- Shopee bridge: `http://127.0.0.1:4020` reachable, ADB ready, auto-accept enabled, 15s polling, 10 offer records; classifier now excludes ordinary order-related notifications
+- Starting HEAD: `47e2bec` (`docs: record offer classification status`)
+- Previously verified CI baseline: run `40025025770` green on `7290aea`
+- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 18605; `/health` returns 200
+- Supervisor: running detached (`scripts/local-supervisor.sh`), PID 18552; restarts app and databases on failure
+- Shopee bridge: `http://127.0.0.1:4020` returns 200, but ADB `127.0.0.1:5555` is disconnected; 10 cached offers, no current events, 5s polling. Auto-accept is enabled but cannot operate without ADB. Supervisor now treats this as degraded dependency state and no longer restarts the bridge repeatedly.
 - Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` restored and manually exercised; bridge hook also installed
 - LAN URL: `http://10.38.25.243:3000` (dynamic address)
 - Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis,boot}.log`
@@ -38,10 +38,10 @@ Updated: 2026-10-23 21:22 (Asia/Bangkok)
 - `npm run typecheck` pass
 - `npm run build` pass
 - `npm test -- --runInBand` 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
-- `node scripts/e2e-ui.js` E2E PASS; latest order `order_b7edc9c6-ffad-44b3-b610-2222fd89bcb8` DELIVERED, `consoleErrors: []`
+- `node scripts/e2e-ui.js` E2E PASS; latest order `order_bfff9b80-1dc7-4062-b467-eaee000bb178` DELIVERED, `consoleErrors: []`; runner now loads `.env` and selects the admin API key itself
 - Browser fixture confirms one linked order notification and one ordinary notification appear together as two cards without duplicating the order
 - Bridge-console fixture confirms an offer and ordinary notification in one table with no duplicated order number; classifier checks reject customer messages and pickup-ready notices
-- Live bridge order list was reduced from 32 false-positive-inclusive records to 10 offer records; health and ADB remained available after restart
+- Previous bridge check reduced the order list from 32 false-positive-inclusive records to 10 offer records; ADB has since disconnected
 - Live browser rendered the bridge activity and upgraded the service-worker cache from the old version to `fod-v5`
 - Simulated driver geolocation test passed through permission, watch, API persistence, and stop; saved driver coordinates were restored afterward
 - Supervisor restart test passed after terminating the app; `/health` recovered and driver was `AVAILABLE` with zero assigned jobs
@@ -51,11 +51,14 @@ Updated: 2026-10-23 21:22 (Asia/Bangkok)
 - Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock; boot hook re-run kept a single supervisor
 - LAN health check -> 200 on `http://10.38.25.243:3000/health`
 - GitHub Actions run `40025025770` success (commit `7290aea`)
+- Current bridge `/health` 200 with ADB `device not found`; `adb devices -l` is empty and connection to `127.0.0.1:5555` is refused
+- Bridge supervisor syntax PASS and remained at one stable app PID for 35 seconds while ADB was unavailable
 
 ## Remaining
 
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
 - Real reboot test for the FOD and bridge boot hooks (installed and exercised manually, but no reboot performed).
+- Restore Android Wireless debugging/ADB pairing or update `ADB_SERIAL` to the currently paired endpoint before relying on live Shopee bridge data; until then notifications, screenshots, and auto-accept cannot operate.
 - Shopee order/status synchronization is out of scope for the read-only bridge handoff; it needs an authorized Shopee Partner API/webhook plus order matching, duplicate detection, and confirmation before any write action.
 - Six historical offer records still show `accept control not found`. No live offer was available to verify the accept control after the classifier fix, so successful auto-accept is not yet confirmed.
 - Bridge source is outside the FOD Git worktree; its current changes are local and not pushed.

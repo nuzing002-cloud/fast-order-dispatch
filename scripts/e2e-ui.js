@@ -2,11 +2,20 @@ const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:3000';
 const CHROME = process.env.CHROME_PATH || `${process.env.PREFIX}/bin/chromium-browser`;
 const OUT = process.env.E2E_OUT_DIR || path.join(process.env.TMPDIR || '/tmp', 'fod-e2e');
 const DRIVER = '1388246780';
-const API_KEY = process.env.API_KEY || process.env.E2E_API_KEY || '';
+const API_KEY =
+  process.env.API_KEY ||
+  process.env.E2E_API_KEY ||
+  (process.env.API_KEYS || '')
+    .split(',')
+    .map((entry) => entry.trim().split(':'))
+    .find(([, role]) => role === 'admin')?.[0] ||
+  '';
 
 fs.mkdirSync(OUT, { recursive: true });
 
