@@ -2,17 +2,16 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-23 21:00 (Asia/Bangkok)
+Updated: 2026-10-23 21:10 (Asia/Bangkok)
 
 ## Current state
 
 - Branch: `main`, synced with `origin/main`
-- Verified code HEAD: `b65488c` (`fix: unify Shopee order and notification feed`)
-- CI: run `40023297500` green
-- CI: GitHub Actions run `39951520361` green (`build-and-test` + `docker` smoke test)
-- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 10769
-- Supervisor: running (`scripts/local-supervisor.sh`), PID 10753; restarts app and databases on failure
-- Shopee bridge: `http://127.0.0.1:4020` connected read-only, `reachable=true`, 15s polling, 2 orders / 9 events, heatmap PNG available
+- Verified code HEAD: `f3bc5ea` (`fix: refresh cached notification feed in installed PWA`)
+- CI: run `40024595943` green
+- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 8981
+- Supervisor: running detached (`scripts/local-supervisor.sh`), PID 8965; restarts app and databases on failure
+- Shopee bridge: `http://127.0.0.1:4020` connected read-only, `reachable=true`, 15s polling, 32 orders / 42 events, heatmap PNG available
 - Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` restored and manually exercised; bridge hook also installed
 - LAN URL: `http://10.38.25.243:3000` (dynamic address)
 - Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis,boot}.log`
@@ -40,13 +39,14 @@ Updated: 2026-10-23 21:00 (Asia/Bangkok)
 - `npm test -- --runInBand` 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` E2E PASS; latest order `order_248cbcae-03f3-4357-a689-1b02ee81207e` DELIVERED, `consoleErrors: []`
 - Browser fixture confirms one linked order notification and one ordinary notification appear together as two cards without duplicating the order
+- Live browser rendered the bridge activity and upgraded the service-worker cache from the old version to `fod-v5`
 - Separate pre-existing local edits to bridge/config/driver files remain uncommitted and were not included in this fix
 - Bridge live: status 200 read-only/reachable, sync 200, screenshot 200 `image/png` 653301 bytes, webhook dedupe `duplicates=1`, open/accept routes 404
 - Shopee deep-link endpoint live check -> 200 (`foody://driver/rn/@shopee-rn/main/TRANSACTIONS`)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
 - Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock; boot hook re-run kept a single supervisor
 - LAN health check -> 200 on `http://10.38.25.243:3000/health`
-- GitHub Actions run `40023297500` success (commit `b65488c`)
+- GitHub Actions run `40024595943` success (commit `f3bc5ea`)
 
 ## Remaining
 
