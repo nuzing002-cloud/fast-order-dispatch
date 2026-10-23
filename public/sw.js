@@ -1,4 +1,4 @@
-const CACHE = 'fod-v3';
+const CACHE = 'fod-v4';
 const PRECACHE = [
   '/',
   '/index.html',

@@ -33,6 +33,11 @@ import {
   parseShopeeDriverDestination
 } from './integrations/ShopeeDriverLinks';
 import {
+  ShopeeBridgeClient,
+  verifyShopeeBridgeSignature
+} from './integrations/ShopeeBridgeClient';
+import { ShopeeBridgeService } from './integrations/ShopeeBridgeService';
+import {
   BatchProcessingService,
   DISPATCH_DRIVER_ID,
   DriverPatch
@@ -331,6 +336,8 @@ export interface DispatchAppOptions {
   idempotencyTtlMs?: number;
   paymentWebhook?: PaymentWebhookOptions;
   push?: PushNotifier;
+  shopeeBridge?: ShopeeBridgeService;
+  shopeeBridgeWebhookSecret?: string;
 }
 
 export function createDispatchApp(options: DispatchAppOptions = {}): Express {
@@ -356,6 +363,19 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     express.raw({ type: 'application/json', limit: '1mb' }),
     asyncHandler(async (request, response) => {
       await handlePaymentWebhook(request, response, service, options.paymentWebhook);
+    })
+  );
+
+  app.post(
+    '/webhooks/shopee-bridge',
+    express.raw({ type: 'application/json', limit: '256kb' }),
+    asyncHandler(async (request, response) => {
+      handleShopeeBridgeWebhook(
+        request,
+        response,
+        options.shopeeBridge,
+        options.shopeeBridgeWebhookSecret
+      );
     })
   );
 
@@ -436,6 +456,64 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
     asyncHandler(async (request, response) => {
       const destination = parseShopeeDriverDestination(request.query.destination);
       response.json(buildShopeeDriverLink(destination));
+    })
+  );
+
+  app.get(
+    '/integrations/shopee-bridge/status',
+    asyncHandler(async (_request, response) => {
+      if (!options.shopeeBridge) {
+        response.json({
+          configured: false,
+          capability: 'read-only',
+          baseUrl: null,
+          reachable: false,
+          syncIntervalMs: null,
+          lastAttemptAt: null,
+          lastSyncAt: null,
+          lastEventAt: null,
+          lastError: 'Shopee bridge is not configured',
+          health: null,
+          events: [],
+          orders: [],
+          screenshot: { available: false, bytes: 0, updatedAt: null },
+          safety: {
+            commandsExposed: false,
+            autoAcceptOwner: 'shopee-bridge',
+            note: 'Set SHOPEE_BRIDGE_URL to enable read-only synchronization'
+          }
+        });
+        return;
+      }
+      response.json(options.shopeeBridge.status());
+    })
+  );
+
+  app.post(
+    '/integrations/shopee-bridge/sync',
+    requireRole('admin', 'operator'),
+    asyncHandler(async (_request, response) => {
+      if (!options.shopeeBridge) {
+        throw new ConflictError('Shopee bridge is not configured');
+      }
+      response.json(await options.shopeeBridge.refresh());
+    })
+  );
+
+  app.get(
+    '/integrations/shopee-bridge/screenshot',
+    asyncHandler(async (_request, response) => {
+      if (!options.shopeeBridge) {
+        throw new ConflictError('Shopee bridge is not configured');
+      }
+      const screenshot = options.shopeeBridge.getScreenshot();
+      if (!screenshot) {
+        throw new NotFoundError('Shopee bridge has no screenshot yet');
+      }
+      response.setHeader('Content-Type', screenshot.contentType);
+      response.setHeader('Content-Length', String(screenshot.data.length));
+      response.setHeader('Cache-Control', 'no-store');
+      response.send(screenshot.data);
     })
   );
 
@@ -1030,6 +1108,81 @@ function extractWebhookUpdate(
   return { providerTransactionId, status };
 }
 
+function isLoopbackAddress(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.startsWith('::ffff:') ? value.slice(7) : value;
+  return (
+    normalized === '::1' ||
+    normalized === '0:0:0:0:0:0:0:1' ||
+    normalized.startsWith('127.')
+  );
+}
+
+function parseShopeeBridgeWebhookEvents(payload: unknown): Record<string, unknown>[] | undefined {
+  const candidates = Array.isArray(payload)
+    ? payload
+    : isRecord(payload) && isRecord(payload.event)
+      ? [payload.event]
+      : [payload];
+  if (candidates.length === 0 || candidates.length > 20) return undefined;
+  const events: Record<string, unknown>[] = [];
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) return undefined;
+    if (typeof candidate.type !== 'string' || candidate.type.trim().length === 0) {
+      return undefined;
+    }
+    events.push(candidate);
+  }
+  return events;
+}
+
+function handleShopeeBridgeWebhook(
+  request: Request,
+  response: Response,
+  service: ShopeeBridgeService | undefined,
+  secret: string | undefined
+): void {
+  if (!service) {
+    response.status(503).json({ error: 'Shopee bridge is not configured' });
+    return;
+  }
+  if (!secret && !isLoopbackAddress(request.socket.remoteAddress)) {
+    response.status(403).json({ error: 'Shopee bridge webhook requires a loopback source' });
+    return;
+  }
+  const rawBody = Buffer.isBuffer(request.body)
+    ? request.body
+    : typeof request.body === 'string'
+      ? Buffer.from(request.body)
+      : Buffer.alloc(0);
+  if (secret) {
+    const signature =
+      request.header('x-shopee-bridge-signature') ?? request.header('x-webhook-signature');
+    if (!verifyShopeeBridgeSignature(rawBody, signature, secret)) {
+      response.status(401).json({ error: 'Invalid Shopee bridge signature' });
+      return;
+    }
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody.toString('utf8')) as unknown;
+  } catch {
+    response.status(400).json({ error: 'Invalid Shopee bridge payload' });
+    return;
+  }
+  const events = parseShopeeBridgeWebhookEvents(payload);
+  if (!events) {
+    response.status(400).json({ error: 'Invalid Shopee bridge event payload' });
+    return;
+  }
+  const results = events.map((event) => service.ingestEvent(event));
+  response.json({
+    ok: true,
+    received: results.length,
+    duplicates: results.filter((result) => result.duplicate).length
+  });
+}
+
 async function handlePaymentWebhook(
   request: Request,
   response: Response,
@@ -1126,6 +1279,15 @@ export const dispatchService = new BatchProcessingService(config.dispatchBatchSi
 });
 export const paymentService = createPaymentService(config);
 export const pushNotifier = createPushNotifier(store, config);
+export const shopeeBridgeService = config.shopeeBridgeUrl
+  ? new ShopeeBridgeService({
+      client: new ShopeeBridgeClient({
+        baseUrl: config.shopeeBridgeUrl,
+        timeoutMs: config.shopeeBridgeTimeoutMs
+      }),
+      syncIntervalMs: config.shopeeBridgeSyncMs
+    })
+  : undefined;
 export const app = createDispatchApp({
   service: dispatchService,
   paymentService,
@@ -1143,7 +1305,9 @@ export const app = createDispatchApp({
         ? config.stripeWebhookSecret
         : config.paymentWebhookSecret
   },
-  push: pushNotifier
+  push: pushNotifier,
+  shopeeBridge: shopeeBridgeService,
+  shopeeBridgeWebhookSecret: config.shopeeBridgeWebhookSecret
 });
 
 export interface StartServerOptions {
@@ -1163,6 +1327,7 @@ export async function startServer(
 
   await dispatchService.initialize();
   pushNotifier.bindService(dispatchService);
+  shopeeBridgeService?.start();
 
   const server = createServer(app);
   const io = await attachRealtime(server, dispatchService, {
@@ -1197,7 +1362,9 @@ export async function startServer(
       paymentProvider: config.paymentProvider,
       driverSharePercent: config.driverSharePercent,
       push: Boolean(config.vapidPublicKey && config.vapidPrivateKey),
-      redis: Boolean(config.redisUrl)
+      redis: Boolean(config.redisUrl),
+      shopeeBridge: config.shopeeBridgeUrl ? 'read-only' : 'disabled',
+      shopeeBridgeWebhookSecret: Boolean(config.shopeeBridgeWebhookSecret)
     });
     logger.info('dispatch_restricted', { driverIds: dispatchService.getDispatchDriverIds() });
   });
@@ -1211,6 +1378,7 @@ if (require.main === module) {
       const shutdown = (): void => {
         logger.info('shutting_down');
         dispatchService.stopAutoProcessing();
+        shopeeBridgeService?.stop();
         const limiter = app.locals.rateLimiter as RateLimiterHandle | undefined;
         io.close(async () => {
           if (limiter) await limiter.close().catch(() => undefined);

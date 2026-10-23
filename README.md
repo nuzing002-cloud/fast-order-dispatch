@@ -74,6 +74,35 @@ The web console accepts `?api_key=...` (or `#api_key=...`) once, stores it in `l
 
 Supported destinations are `home`, `notification`, `order-detail`, and `transactions`. A React Native companion app can open the returned `url` with `Linking.openURL(url)`. This handoff opens a screen in the Shopee Driver app; it is not an order-sync API. Automatic order/status synchronization requires an authorized Shopee Partner API or webhook and should be added as a separate provider adapter.
 
+### Shopee bridge (port 4020)
+
+The local bridge on `127.0.0.1:4020` is the only process that owns ADB, UI automation, and auto-accept. The dispatch service keeps that boundary: it reads bridge state over HTTP and never executes tap/swipe/accept actions.
+
+```bash
+SHOPEE_BRIDGE_URL=http://127.0.0.1:4020
+SHOPEE_BRIDGE_SYNC_MS=15000
+SHOPEE_BRIDGE_TIMEOUT_MS=5000
+```
+
+When configured, the server polls the bridge every `SHOPEE_BRIDGE_SYNC_MS` and caches:
+
+- `/health` (ADB, auto-open, auto-accept, last poll)
+- `/events?limit=50` (deduplicated, newest first)
+- `/orders?limit=50`
+- `/area/latest.png` (latest heatmap screenshot)
+
+The admin page shows the bridge status, Shopee orders, recent events, and the latest heatmap image. The integration is intentionally read-only; there are no `/open` or `/accept` proxy routes. Adding those requires duplicate detection and a safe order match/confirmation flow first.
+
+Endpoints:
+
+```bash
+curl -H "x-api-key: $API_KEY" 'http://127.0.0.1:3000/integrations/shopee-bridge/status'
+curl -X POST -H "x-api-key: $API_KEY" 'http://127.0.0.1:3000/integrations/shopee-bridge/sync'
+curl -H "x-api-key: $API_KEY" 'http://127.0.0.1:3000/integrations/shopee-bridge/screenshot' -o area.png
+```
+
+The bridge can push events immediately by starting with `WEBHOOK_URL=http://127.0.0.1:3000/webhooks/shopee-bridge`. Without `SHOPEE_BRIDGE_WEBHOOK_SECRET`, that webhook accepts loopback sources only. With a secret, the sender must sign the raw JSON body with HMAC-SHA256 and send `x-shopee-bridge-signature: sha256=<hex>`. Polling remains the fallback, so a missed webhook does not lose state.
+
 ## Local always-on runtime (Termux)
 
 `scripts/local-supervisor.sh` keeps PostgreSQL, Redis, and the API running on this device. It starts the app from `dist/`, checks `/health`, restarts it after crashes, and starts the databases when they are down.

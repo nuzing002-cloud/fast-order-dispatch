@@ -12,6 +12,10 @@ test('uses development defaults', () => {
   expect(config.trustProxy).toBe(false);
   expect(config.databaseUrl).toBeUndefined();
   expect(config.dbPoolMax).toBe(10);
+  expect(config.shopeeBridgeUrl).toBeUndefined();
+  expect(config.shopeeBridgeWebhookSecret).toBeUndefined();
+  expect(config.shopeeBridgeSyncMs).toBe(15_000);
+  expect(config.shopeeBridgeTimeoutMs).toBe(5_000);
 });
 
 test('parses configured values', () => {
@@ -35,6 +39,36 @@ test('parses configured values', () => {
   expect(config.trustProxy).toBe(true);
   expect(config.dbPoolMax).toBe(4);
   expect(config.databaseSsl).toBe(true);
+});
+
+test('parses Shopee bridge configuration', () => {
+  const config = loadConfig({
+    SHOPEE_BRIDGE_URL: 'http://127.0.0.1:4020/',
+    SHOPEE_BRIDGE_WEBHOOK_SECRET: ' bridge-secret ',
+    SHOPEE_BRIDGE_SYNC_MS: '20000',
+    SHOPEE_BRIDGE_TIMEOUT_MS: '2500'
+  });
+  expect(config.shopeeBridgeUrl).toBe('http://127.0.0.1:4020');
+  expect(config.shopeeBridgeWebhookSecret).toBe('bridge-secret');
+  expect(config.shopeeBridgeSyncMs).toBe(20_000);
+  expect(config.shopeeBridgeTimeoutMs).toBe(2_500);
+});
+
+test('rejects invalid Shopee bridge configuration', () => {
+  expect(() => loadConfig({ SHOPEE_BRIDGE_URL: 'not-a-url' })).toThrow('SHOPEE_BRIDGE_URL');
+  expect(() => loadConfig({ SHOPEE_BRIDGE_URL: 'ftp://127.0.0.1:4020' })).toThrow(
+    'SHOPEE_BRIDGE_URL'
+  );
+  expect(() => loadConfig({ SHOPEE_BRIDGE_URL: 'http://user:pass@127.0.0.1:4020' })).toThrow(
+    'SHOPEE_BRIDGE_URL'
+  );
+  expect(() => loadConfig({ SHOPEE_BRIDGE_URL: 'http://127.0.0.1:4020?secret=1' })).toThrow(
+    'SHOPEE_BRIDGE_URL'
+  );
+  expect(() => loadConfig({ SHOPEE_BRIDGE_SYNC_MS: '500' })).toThrow('SHOPEE_BRIDGE_SYNC_MS');
+  expect(() => loadConfig({ SHOPEE_BRIDGE_TIMEOUT_MS: '50' })).toThrow(
+    'SHOPEE_BRIDGE_TIMEOUT_MS'
+  );
 });
 
 test('rejects invalid configuration', () => {

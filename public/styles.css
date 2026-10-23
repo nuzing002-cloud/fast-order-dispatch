@@ -724,3 +724,12 @@ tbody tr:hover {
     grid-template-columns: minmax(0, 1fr) 70px 90px auto;
   }
 }
+
+.bridge-shot {
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #0b1220;
+}

@@ -55,6 +55,58 @@ export const openApiSpec = {
         }
       }
     },
+    '/webhooks/shopee-bridge': {
+      post: {
+        summary: 'Receive events from the local Shopee bridge',
+        description:
+          'Read-only event ingestion for the bridge on port 4020. Without SHOPEE_BRIDGE_WEBHOOK_SECRET the endpoint accepts loopback sources only. With a secret, send x-shopee-bridge-signature: sha256=<hex HMAC of the raw body>. This endpoint never accepts or opens Shopee jobs.',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { type: 'object', additionalProperties: true } }
+          }
+        },
+        responses: {
+          '200': { description: 'Event received (duplicates are reported)' },
+          '400': { description: 'Invalid event payload' },
+          '401': { description: 'Invalid HMAC signature' },
+          '403': { description: 'Non-loopback source without a signature' },
+          '503': { description: 'Shopee bridge sync is not configured' }
+        }
+      }
+    },
+    '/integrations/shopee-bridge/status': {
+      get: {
+        summary: 'Read-only Shopee bridge status',
+        description:
+          'Cached health, events, orders, and screenshot metadata for port 4020. This API exposes no open/accept commands.',
+        responses: { '200': { description: 'Bridge status' } }
+      }
+    },
+    '/integrations/shopee-bridge/sync': {
+      post: {
+        summary: 'Refresh the Shopee bridge snapshot',
+        description:
+          'Pulls health, events, orders, and the latest area screenshot from port 4020. Requires admin or operator when auth is enabled.',
+        responses: {
+          '200': { description: 'Refreshed status' },
+          '403': { description: 'Requires admin or operator role' },
+          '409': { description: 'Shopee bridge sync is not configured' }
+        }
+      }
+    },
+    '/integrations/shopee-bridge/screenshot': {
+      get: {
+        summary: 'Latest Shopee area screenshot',
+        description: 'Returns the cached image/png from the bridge area check. Read-only.',
+        responses: {
+          '200': { description: 'PNG image', content: { 'image/png': { schema: { type: 'string', format: 'binary' } } } },
+          '404': { description: 'No screenshot captured yet' },
+          '409': { description: 'Shopee bridge sync is not configured' }
+        }
+      }
+    },
     '/drivers': {
       get: {
         summary: 'List drivers',

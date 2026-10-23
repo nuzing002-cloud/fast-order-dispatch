@@ -12,6 +12,18 @@
   const payoutsBody = document.getElementById('payoutsBody');
   const payoutPending = document.getElementById('payoutPending');
 
+  const bridgeBadge = document.getElementById('bridgeBadge');
+  const bridgeStats = document.getElementById('bridgeStats');
+  const bridgeOrders = document.getElementById('bridgeOrders');
+  const bridgeOrderCount = document.getElementById('bridgeOrderCount');
+  const bridgeEvents = document.getElementById('bridgeEvents');
+  const bridgeSyncInfo = document.getElementById('bridgeSyncInfo');
+  const bridgeShot = document.getElementById('bridgeShot');
+  const bridgeShotEmpty = document.getElementById('bridgeShotEmpty');
+  const bridgeShotMeta = document.getElementById('bridgeShotMeta');
+  let bridgeShotUrl = null;
+  let lastBridgeShotAt = null;
+
   let dispatchDriverIds = ['1388246780'];
 
   function metricCard(label, value, hint) {
@@ -21,6 +33,190 @@
         <span class="stat-value">${F.escapeHtml(value)}</span>
         <span class="stat-hint">${F.escapeHtml(hint || '')}</span>
       </article>`;
+  }
+
+  const BRIDGE_ORDER_LABELS = {
+    new: 'งานใหม่',
+    opened: 'เปิดดูแล้ว',
+    accepted: 'รับแล้ว',
+    failed: 'ล้มเหลว'
+  };
+
+  const BRIDGE_ORDER_CLASSES = {
+    new: 'status-PENDING',
+    opened: 'status-ASSIGNED',
+    accepted: 'status-AVAILABLE',
+    failed: 'status-FAILED'
+  };
+
+  function renderBridge(status) {
+    if (!status.configured) {
+      bridgeBadge.className = 'badge status-PENDING';
+      bridgeBadge.textContent = 'ยังไม่ตั้งค่า';
+      bridgeStats.innerHTML = [
+        metricCard('สะพาน Shopee', 'ปิดอยู่', 'ตั้งค่า SHOPEE_BRIDGE_URL'),
+        metricCard('คำสั่งรับงาน', 'ไม่เปิดจาก 3000', 'read-only'),
+        metricCard('ออเดอร์', '0', 'ยังไม่มีข้อมูล'),
+        metricCard('เหตุการณ์', '0', 'ยังไม่มีข้อมูล')
+      ].join('');
+      bridgeOrderCount.textContent = '0 งาน';
+      bridgeOrders.innerHTML =
+        '<tr><td colspan="6" class="empty">ยังไม่ได้เชื่อมต่อสะพาน Shopee</td></tr>';
+      bridgeEvents.innerHTML = '<p class="muted small">ยังไม่ได้เชื่อมต่อสะพาน Shopee</p>';
+      bridgeSyncInfo.textContent = 'ตั้งค่า SHOPEE_BRIDGE_URL ใน .env แล้วรีสตาร์ต 3000';
+      return;
+    }
+
+    const health = status.health || {};
+    const adb = health.adb || {};
+    const orders = status.orders || [];
+    const events = status.events || [];
+    const autoAccept = health.autoAccept === true;
+    const autoOpen = health.autoOpen === true;
+    const lastSync = status.lastSyncAt ? F.time(status.lastSyncAt) : 'ยังไม่เคย';
+    const interval = status.syncIntervalMs
+      ? `${Math.round(status.syncIntervalMs / 1000)} วิ`
+      : '-';
+
+    bridgeBadge.className = `badge ${status.reachable ? 'status-AVAILABLE' : 'status-FAILED'}`;
+    bridgeBadge.textContent = status.reachable ? 'เชื่อมต่อ 4020 แล้ว' : '4020 ออฟไลน์';
+    bridgeStats.innerHTML = [
+      metricCard('การเชื่อมต่อ', status.reachable ? 'ออนไลน์' : 'ออฟไลน์', status.baseUrl || '-'),
+      metricCard(
+        'ADB',
+        adb.ok === true ? 'พร้อม' : 'ไม่พร้อม',
+        adb.serial ? `เครื่อง ${adb.serial}` : adb.error || '-'
+      ),
+      metricCard('ออเดอร์ Shopee', String(orders.length), `${events.length} เหตุการณ์`),
+      metricCard(
+        'โหมดใน 4020',
+        autoAccept ? 'รับอัตโนมัติ' : 'รับเอง',
+        `เปิดแอปอัตโนมัติ ${autoOpen ? 'เปิด' : 'ปิด'}`
+      )
+    ].join('');
+    bridgeOrderCount.textContent = `${orders.length} งาน`;
+    bridgeSyncInfo.textContent = [
+      `ซิงก์ล่าสุด ${lastSync}`,
+      `ทุก ${interval}`,
+      status.lastError ? `• ${status.lastError}` : ''
+    ]
+      .filter(Boolean)
+      .join(' • ');
+
+    if (orders.length === 0) {
+      bridgeOrders.innerHTML =
+        '<tr><td colspan="6" class="empty">ยังไม่มีงานจาก Shopee</td></tr>';
+    } else {
+      bridgeOrders.innerHTML = orders
+        .map((order) => {
+          const orderId = String(order.orderNo || order.id || order.key || '-');
+          const shortId = orderId.length > 18 ? orderId.slice(-18) : orderId;
+          const statusValue = String(order.status || '-');
+          const statusLabel = BRIDGE_ORDER_LABELS[statusValue] || statusValue;
+          const statusClass = BRIDGE_ORDER_CLASSES[statusValue] || 'status-PENDING';
+          return `
+          <tr>
+            <td class="mono" title="${F.escapeHtml(orderId)}">${F.escapeHtml(shortId)}</td>
+            <td><span class="badge ${statusClass}">${F.escapeHtml(statusLabel)}</span></td>
+            <td>${order.price ? `฿${F.escapeHtml(String(order.price))}` : '-'}</td>
+            <td>${order.distance ? `${F.escapeHtml(String(order.distance))} กม.` : '-'}</td>
+            <td>${order.duration ? `${F.escapeHtml(String(order.duration))} นาที` : '-'}</td>
+            <td>${F.time(order.updatedAt || order.createdAt)}</td>
+          </tr>`;
+        })
+        .join('');
+    }
+
+    if (events.length === 0) {
+      bridgeEvents.innerHTML = '<p class="muted small">ยังไม่มีเหตุการณ์</p>';
+    } else {
+      bridgeEvents.innerHTML = `
+        <div class="card-list">
+          ${events
+            .slice(0, 10)
+            .map((event) => {
+              const type = String(event.type || '-');
+              const title = String(event.title || '-');
+              const text = String(event.text || '').slice(0, 300);
+              return `
+              <div class="order-card">
+                <div class="order-card-head">
+                  <span><strong>${F.escapeHtml(title)}</strong></span>
+                  <span class="muted small">${F.time(event.time)}</span>
+                </div>
+                <span class="muted small">${F.escapeHtml(type)}${text ? ` · ${F.escapeHtml(text)}` : ''}</span>
+              </div>`;
+            })
+            .join('')}
+        </div>`;
+    }
+  }
+
+  async function loadBridgeShot(status) {
+    const screenshot = status.screenshot || {};
+    if (!status.configured || !screenshot.available) {
+      if (bridgeShotUrl) {
+        URL.revokeObjectURL(bridgeShotUrl);
+        bridgeShotUrl = null;
+      }
+      lastBridgeShotAt = null;
+      bridgeShot.hidden = true;
+      bridgeShot.removeAttribute('src');
+      bridgeShotEmpty.hidden = false;
+      bridgeShotEmpty.textContent = status.configured
+        ? 'ยังไม่มีภาพ — กด “ตรวจพื้นที่” ในคอนโซล 4020 ก่อน'
+        : 'ยังไม่ได้ตั้งค่าสะพาน Shopee';
+      bridgeShotMeta.textContent = '-';
+      return;
+    }
+    if (lastBridgeShotAt === screenshot.updatedAt && bridgeShot.src) {
+      bridgeShotMeta.textContent = `${F.time(screenshot.updatedAt)} · ${Math.round(
+        Number(screenshot.bytes || 0) / 1024
+      )} KB`;
+      return;
+    }
+    try {
+      const headers = {};
+      const key = F.getKey();
+      if (key) headers['x-api-key'] = key;
+      const response = await fetch('/integrations/shopee-bridge/screenshot', { headers });
+      if (!response.ok) {
+        bridgeShot.hidden = true;
+        bridgeShotEmpty.hidden = false;
+        bridgeShotEmpty.textContent =
+          response.status === 401
+            ? 'ต้องใส่ API key เพื่อดูภาพ'
+            : `โหลดภาพไม่สำเร็จ (HTTP ${response.status})`;
+        bridgeShotMeta.textContent = '-';
+        return;
+      }
+      const blob = await response.blob();
+      if (bridgeShotUrl) URL.revokeObjectURL(bridgeShotUrl);
+      bridgeShotUrl = URL.createObjectURL(blob);
+      bridgeShot.src = bridgeShotUrl;
+      bridgeShot.hidden = false;
+      bridgeShotEmpty.hidden = true;
+      bridgeShotMeta.textContent = `${F.time(screenshot.updatedAt)} · ${Math.round(
+        blob.size / 1024
+      )} KB`;
+      lastBridgeShotAt = screenshot.updatedAt;
+    } catch (error) {
+      bridgeShot.hidden = true;
+      bridgeShotEmpty.hidden = false;
+      bridgeShotEmpty.textContent = `โหลดภาพไม่สำเร็จ: ${error.message}`;
+    }
+  }
+
+  async function loadBridge() {
+    try {
+      const status = await F.request('/integrations/shopee-bridge/status');
+      renderBridge(status);
+      await loadBridgeShot(status);
+    } catch (error) {
+      bridgeBadge.className = 'badge status-FAILED';
+      bridgeBadge.textContent = 'โหลดสถานะไม่สำเร็จ';
+      bridgeSyncInfo.textContent = error.message;
+    }
   }
 
   async function loadHealth() {
@@ -251,9 +447,27 @@
     loadPayouts();
     loadBatches();
     loadAudit();
+    loadBridge();
   }
 
   document.getElementById('refreshButton').addEventListener('click', loadAll);
+  document.getElementById('bridgeSyncButton').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const status = await F.request('/integrations/shopee-bridge/sync', {
+        method: 'POST',
+        body: {}
+      });
+      renderBridge(status);
+      await loadBridgeShot(status);
+      F.toast(status.reachable ? 'ซิงก์สถานะ Shopee แล้ว' : 'ซิงก์แล้ว แต่ยังเชื่อมต่อ 4020 ไม่ได้', status.reachable ? 'success' : 'error');
+    } catch (error) {
+      F.toast(error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
   payoutSelect.addEventListener('change', loadPayoutPending);
 
   document.getElementById('payoutButton').addEventListener('click', async (event) => {
@@ -469,4 +683,5 @@
 
   loadAll();
   setInterval(loadAll, 25000);
+  setInterval(loadBridge, 10000);
 })();

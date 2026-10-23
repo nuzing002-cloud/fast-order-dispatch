@@ -36,6 +36,10 @@ export interface AppConfig {
   stripeWebhookSecret?: string;
   stripeApiBase?: string;
   redisUrl?: string;
+  shopeeBridgeUrl?: string;
+  shopeeBridgeWebhookSecret?: string;
+  shopeeBridgeSyncMs: number;
+  shopeeBridgeTimeoutMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -120,7 +124,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     stripeWebhookSecret:
       env.STRIPE_WEBHOOK_SECRET?.trim() || env.PAYMENT_WEBHOOK_SECRET?.trim() || undefined,
     stripeApiBase: env.STRIPE_API_BASE?.trim() || undefined,
-    redisUrl: env.REDIS_URL?.trim() || undefined
+    redisUrl: env.REDIS_URL?.trim() || undefined,
+    shopeeBridgeUrl: parseShopeeBridgeUrl(env.SHOPEE_BRIDGE_URL),
+    shopeeBridgeWebhookSecret: env.SHOPEE_BRIDGE_WEBHOOK_SECRET?.trim() || undefined,
+    shopeeBridgeSyncMs: integer(
+      env.SHOPEE_BRIDGE_SYNC_MS,
+      15_000,
+      1_000,
+      'SHOPEE_BRIDGE_SYNC_MS'
+    ),
+    shopeeBridgeTimeoutMs: integer(
+      env.SHOPEE_BRIDGE_TIMEOUT_MS,
+      5_000,
+      100,
+      'SHOPEE_BRIDGE_TIMEOUT_MS'
+    )
   };
 
   validateProductionConfig(config);
@@ -230,6 +248,26 @@ function validateProductionConfig(config: AppConfig): void {
       'VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required when NODE_ENV=production'
     );
   }
+}
+
+function parseShopeeBridgeUrl(value: string | undefined): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ValidationError('SHOPEE_BRIDGE_URL must be a valid URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new ValidationError('SHOPEE_BRIDGE_URL must use http or https');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new ValidationError(
+      'SHOPEE_BRIDGE_URL must not include credentials, query, or hash'
+    );
+  }
+  return raw.replace(/\/$/, '');
 }
 
 function parseDatabaseUrl(value: string | undefined): string | undefined {
