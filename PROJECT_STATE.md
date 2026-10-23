@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-23 20:55 Asia/Bangkok
+Updated: 2026-10-23 21:00 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -21,7 +21,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | 8 | Accessible from localhost and same LAN | VERIFIED_COMPLETE | `http://127.0.0.1:3000/health` 200; `http://10.38.25.243:3000/health` 200 (LAN IP is dynamic) |
 | 9 | No stale test orders blocking driver capacity | VERIFIED_COMPLETE | Driver `AVAILABLE`, 0 assigned, accepts new orders after E2E |
 | 10 | Deterministic self-cleaning E2E | VERIFIED_COMPLETE | Creates an order, clicks READY in the admin UI, drives the same order to DELIVERED by UI, verifies persistence, cleans up in `finally`; latest run `order_dc041782-...` PASS with zero console errors |
-| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Run `39951520361` on `d2e4196` success (`build-and-test` + `docker` smoke test) |
+| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Run `40023297500` on `b65488c` success |
 | 12 | Documentation for install/run/maintenance | VERIFIED_COMPLETE | `README.md`, `AGENTS.md`, `STATUS.md`, this file |
 | 13 | Production deployment to a public host | BLOCKED | Requires server/host, domain, TLS origin, real API keys, payment credentials, VAPID keys, and hosting cost |
 | 14 | Shopee Food Driver navigation handoff (`/shopee-driver.html`, `/integrations/shopee-driver/{links,deep-link}`) | VERIFIED_COMPLETE | API tests (`navigation-only`, 4 destinations, 400 on unknown), page served, live curl 200; no private Shopee API or order sync |
@@ -30,7 +30,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Current runtime
 
-- Branch `main`, HEAD `3ec342f` (`docs: record verified Shopee bridge sync`); local notification-feed changes are in progress.
+- Branch `main`, HEAD `b65488c` (`fix: unify Shopee order and notification feed`), pushed to `origin/main`.
 - Server: PID 10769, `node dist/index.js`, port 3000, started by the supervisor at 20:53; `dist/` rebuilt from the current sources.
 - Supervisor: PID 10753, `scripts/local-supervisor.sh` (app/PostgreSQL/Redis health loop).
 - PostgreSQL: PID 5971, port 5432.
@@ -57,7 +57,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - Driver after E2E: `AVAILABLE`, `assignedOrders=[]`, `acceptsNewOrders=true`.
 - Supervisor duplicate check after running the boot hook manually: still one supervisor (PID 21785) and one app (PID 23582).
 - LAN health check on the new address: `http://10.38.25.243:3000/health` 200.
-- GitHub Actions run `39951520361` success on `d2e4196` (`build-and-test` + `docker` smoke test).
+- GitHub Actions run `40023297500` success on `b65488c`.
 
 ## Files changed in this batch
 
@@ -66,6 +66,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - `src/index.ts` — `/integrations/shopee-bridge/{status,sync,screenshot}` and HMAC/loopback-limited `/webhooks/shopee-bridge`; lifecycle start/stop and startup log flags
 - `src/config.ts` — `SHOPEE_BRIDGE_URL`, `SHOPEE_BRIDGE_SYNC_MS`, `SHOPEE_BRIDGE_TIMEOUT_MS`, `SHOPEE_BRIDGE_WEBHOOK_SECRET` parsing/validation
 - `public/admin.html`, `public/admin.js`, `public/styles.css` — Thai admin panel for bridge connection, ADB state, unified Shopee order/notification activity, heatmap, manual sync
+- `PROJECT_STATE.md`, `STATUS.md` — updated verification and unified-feed state
 - `public/sw.js` — cache `fod-v4`
 - `src/openapi.ts` — documents the four bridge endpoints
 - `test/ShopeeBridge.test.ts` — client/service/API/webhook/security/screenshot coverage

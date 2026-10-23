@@ -2,12 +2,13 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-23 20:55 (Asia/Bangkok)
+Updated: 2026-10-23 21:00 (Asia/Bangkok)
 
 ## Current state
 
-- Branch: `main`; notification-feed fix is verified locally
-- Verified code HEAD before this change: `3ec342f` (`docs: record verified Shopee bridge sync`)
+- Branch: `main`, synced with `origin/main`
+- Verified code HEAD: `b65488c` (`fix: unify Shopee order and notification feed`)
+- CI: run `40023297500` green
 - CI: GitHub Actions run `39951520361` green (`build-and-test` + `docker` smoke test)
 - Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 10769
 - Supervisor: running (`scripts/local-supervisor.sh`), PID 10753; restarts app and databases on failure
@@ -39,12 +40,13 @@ Updated: 2026-10-23 20:55 (Asia/Bangkok)
 - `npm test -- --runInBand` 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` E2E PASS; latest order `order_248cbcae-03f3-4357-a689-1b02ee81207e` DELIVERED, `consoleErrors: []`
 - Browser fixture confirms one linked order notification and one ordinary notification appear together as two cards without duplicating the order
+- Separate pre-existing local edits to bridge/config/driver files remain uncommitted and were not included in this fix
 - Bridge live: status 200 read-only/reachable, sync 200, screenshot 200 `image/png` 653301 bytes, webhook dedupe `duplicates=1`, open/accept routes 404
 - Shopee deep-link endpoint live check -> 200 (`foody://driver/rn/@shopee-rn/main/TRANSACTIONS`)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
 - Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock; boot hook re-run kept a single supervisor
 - LAN health check -> 200 on `http://10.38.25.243:3000/health`
-- GitHub Actions run `39951520361` success (commit `d2e4196`)
+- GitHub Actions run `40023297500` success (commit `b65488c`)
 
 ## Remaining
 
