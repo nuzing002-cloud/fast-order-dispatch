@@ -14,9 +14,8 @@
 
   const bridgeBadge = document.getElementById('bridgeBadge');
   const bridgeStats = document.getElementById('bridgeStats');
-  const bridgeOrders = document.getElementById('bridgeOrders');
   const bridgeOrderCount = document.getElementById('bridgeOrderCount');
-  const bridgeEvents = document.getElementById('bridgeEvents');
+  const bridgeActivity = document.getElementById('bridgeActivity');
   const bridgeSyncInfo = document.getElementById('bridgeSyncInfo');
   const bridgeShot = document.getElementById('bridgeShot');
   const bridgeShotEmpty = document.getElementById('bridgeShotEmpty');
@@ -49,6 +48,98 @@
     failed: 'status-FAILED'
   };
 
+  const BRIDGE_EVENT_LABELS = {
+    notification: 'แจ้งเตือน',
+    updated: 'อัปเดตแจ้งเตือน',
+    dismissed: 'ปิดแจ้งเตือน',
+    action: 'การทำงาน'
+  };
+
+  function orderMatchesEvent(order, event) {
+    if (order.eventId && event.id) return order.eventId === event.id;
+    return event.order === true && order.key && event.key && order.key === event.key;
+  }
+
+  function renderBridgeActivity(events, orders) {
+    const matchedOrders = new Set();
+    const items = events.map((event) => {
+      const order = orders.find(
+        (candidate) => !matchedOrders.has(candidate) && orderMatchesEvent(candidate, event)
+      );
+      if (order) matchedOrders.add(order);
+      return {
+        event,
+        order,
+        time: event.time || order?.updatedAt || order?.createdAt || ''
+      };
+    });
+
+    for (const order of orders) {
+      if (!matchedOrders.has(order)) {
+        items.push({
+          event: null,
+          order,
+          time: order.updatedAt || order.createdAt || order.time || ''
+        });
+      }
+    }
+
+    items.sort((left, right) => {
+      const leftTime = Date.parse(left.time) || 0;
+      const rightTime = Date.parse(right.time) || 0;
+      return rightTime - leftTime;
+    });
+
+    if (items.length === 0) {
+      bridgeActivity.innerHTML = '<p class="muted small">ยังไม่มีออเดอร์หรือการแจ้งเตือน</p>';
+      return;
+    }
+
+    bridgeActivity.innerHTML = `
+      <div class="card-list">
+        ${items
+          .slice(0, 10)
+          .map(({ event, order, time }) => {
+            const isOrder = Boolean(order) || event?.order === true;
+            const title = String(event?.title || (isOrder ? 'ออเดอร์ Shopee' : 'แจ้งเตือน'));
+            const type = isOrder
+              ? 'ออเดอร์'
+              : BRIDGE_EVENT_LABELS[String(event?.type || '')] || String(event?.type || '-');
+            const text = String(event?.text || event?.bigText || '').slice(0, 300);
+            const orderId = order ? String(order.orderNo || order.id || order.key || '') : '';
+            const statusValue = String(order?.status || '');
+            const statusLabel = BRIDGE_ORDER_LABELS[statusValue] || statusValue;
+            const statusClass = BRIDGE_ORDER_CLASSES[statusValue] || 'status-PENDING';
+            const details = order
+              ? [
+                  orderId ? `งาน ${orderId}` : '',
+                  order.price ? `฿${String(order.price)}` : '',
+                  order.distance ? `${String(order.distance)} กม.` : '',
+                  order.duration ? `${String(order.duration)} นาที` : ''
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              : '';
+            return `
+              <div class="order-card">
+                <div class="order-card-head">
+                  <span><strong>${F.escapeHtml(title)}</strong></span>
+                  <span class="muted small">${F.time(time)}</span>
+                </div>
+                <span class="muted small">
+                  ${F.escapeHtml(type)}${text ? ` · ${F.escapeHtml(text)}` : ''}
+                </span>
+                ${
+                  order
+                    ? `<span class="small">${F.escapeHtml(details)} <span class="badge ${statusClass}">${F.escapeHtml(statusLabel || '-')}</span></span>`
+                    : ''
+                }
+              </div>`;
+          })
+          .join('')}
+      </div>`;
+  }
+
   function renderBridge(status) {
     if (!status.configured) {
       bridgeBadge.className = 'badge status-PENDING';
@@ -60,9 +151,7 @@
         metricCard('เหตุการณ์', '0', 'ยังไม่มีข้อมูล')
       ].join('');
       bridgeOrderCount.textContent = '0 งาน';
-      bridgeOrders.innerHTML =
-        '<tr><td colspan="6" class="empty">ยังไม่ได้เชื่อมต่อสะพาน Shopee</td></tr>';
-      bridgeEvents.innerHTML = '<p class="muted small">ยังไม่ได้เชื่อมต่อสะพาน Shopee</p>';
+      bridgeActivity.innerHTML = '<p class="muted small">ยังไม่ได้เชื่อมต่อสะพาน Shopee</p>';
       bridgeSyncInfo.textContent = 'ตั้งค่า SHOPEE_BRIDGE_URL ใน .env แล้วรีสตาร์ต 3000';
       return;
     }
@@ -98,58 +187,13 @@
     bridgeSyncInfo.textContent = [
       `ซิงก์ล่าสุด ${lastSync}`,
       `ทุก ${interval}`,
+      `ข้อมูล ${freshness.state || 'unknown'}`,
       status.lastError ? `• ${status.lastError}` : ''
     ]
       .filter(Boolean)
       .join(' • ');
 
-    if (orders.length === 0) {
-      bridgeOrders.innerHTML =
-        '<tr><td colspan="6" class="empty">ยังไม่มีงานจาก Shopee</td></tr>';
-    } else {
-      bridgeOrders.innerHTML = orders
-        .map((order) => {
-          const orderId = String(order.orderNo || order.id || order.key || '-');
-          const shortId = orderId.length > 18 ? orderId.slice(-18) : orderId;
-          const statusValue = String(order.status || '-');
-          const statusLabel = BRIDGE_ORDER_LABELS[statusValue] || statusValue;
-          const statusClass = BRIDGE_ORDER_CLASSES[statusValue] || 'status-PENDING';
-          return `
-          <tr>
-            <td class="mono" title="${F.escapeHtml(orderId)}">${F.escapeHtml(shortId)}</td>
-            <td><span class="badge ${statusClass}">${F.escapeHtml(statusLabel)}</span></td>
-            <td>${order.price ? `฿${F.escapeHtml(String(order.price))}` : '-'}</td>
-            <td>${order.distance ? `${F.escapeHtml(String(order.distance))} กม.` : '-'}</td>
-            <td>${order.duration ? `${F.escapeHtml(String(order.duration))} นาที` : '-'}</td>
-            <td>${F.time(order.updatedAt || order.createdAt)}</td>
-          </tr>`;
-        })
-        .join('');
-    }
-
-    if (events.length === 0) {
-      bridgeEvents.innerHTML = '<p class="muted small">ยังไม่มีเหตุการณ์</p>';
-    } else {
-      bridgeEvents.innerHTML = `
-        <div class="card-list">
-          ${events
-            .slice(0, 10)
-            .map((event) => {
-              const type = String(event.type || '-');
-              const title = String(event.title || '-');
-              const text = String(event.text || '').slice(0, 300);
-              return `
-              <div class="order-card">
-                <div class="order-card-head">
-                  <span><strong>${F.escapeHtml(title)}</strong></span>
-                  <span class="muted small">${F.time(event.time)}</span>
-                </div>
-                <span class="muted small">${F.escapeHtml(type)}${text ? ` · ${F.escapeHtml(text)}` : ''}</span>
-              </div>`;
-            })
-            .join('')}
-        </div>`;
-    }
+    renderBridgeActivity(events, orders);
   }
 
   async function loadBridgeShot(status) {

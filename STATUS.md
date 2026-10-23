@@ -2,15 +2,15 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-23 (Asia/Bangkok)
+Updated: 2026-10-23 20:55 (Asia/Bangkok)
 
 ## Current state
 
-- Branch: `main`, synced with `origin/main`
-- Verified code HEAD: `d2e4196` (`feat: sync read-only Shopee bridge status`); this docs update follows as a separate commit
+- Branch: `main`; notification-feed fix is verified locally
+- Verified code HEAD before this change: `3ec342f` (`docs: record verified Shopee bridge sync`)
 - CI: GitHub Actions run `39951520361` green (`build-and-test` + `docker` smoke test)
-- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL + Redis), PID 23582
-- Supervisor: running (`scripts/local-supervisor.sh`), PID 21785; restarts app and databases on failure
+- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 10769
+- Supervisor: running (`scripts/local-supervisor.sh`), PID 10753; restarts app and databases on failure
 - Shopee bridge: `http://127.0.0.1:4020` connected read-only, `reachable=true`, 15s polling, 2 orders / 9 events, heatmap PNG available
 - Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` restored and manually exercised; bridge hook also installed
 - LAN URL: `http://10.38.25.243:3000` (dynamic address)
@@ -24,6 +24,7 @@ Updated: 2026-10-23 (Asia/Bangkok)
 - Minimum delivery fee 28 THB (`MIN_DELIVERY_FEE`), enforced in API and UI
 - Shopee Food Driver navigation handoff: `/shopee-driver.html` plus `/integrations/shopee-driver/links` and `/integrations/shopee-driver/deep-link` (navigation-only, no private API or order sync)
 - Read-only Shopee bridge integration: `/integrations/shopee-bridge/{status,sync,screenshot}` and `/webhooks/shopee-bridge`; typed client/service, HMAC or loopback-only webhook, event dedupe, screenshot validation, admin panel, no open/accept proxy routes
+- Unified Shopee activity feed: order notifications and regular notifications appear together in time order; linked orders are enriched with order details and rendered once
 - Web console API-key bootstrap (`?api_key=`/`#api_key=`) with validation and URL cleanup
 - Production Docker/Caddy deployment files, prune script, OpenAPI docs
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
@@ -35,8 +36,9 @@ Updated: 2026-10-23 (Asia/Bangkok)
 - `npm run lint` pass
 - `npm run typecheck` pass
 - `npm run build` pass
-- `npm test` 130 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`); one earlier parallel run hit a transient Redis adapter timeout, reruns passed
-- `node scripts/e2e-ui.js` E2E PASS twice after the bridge UI/cache bump `fod-v4`; latest order `order_dc041782-...` DELIVERED, `consoleErrors: []`
+- `npm test -- --runInBand` 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
+- `node scripts/e2e-ui.js` E2E PASS; latest order `order_248cbcae-03f3-4357-a689-1b02ee81207e` DELIVERED, `consoleErrors: []`
+- Browser fixture confirms one linked order notification and one ordinary notification appear together as two cards without duplicating the order
 - Bridge live: status 200 read-only/reachable, sync 200, screenshot 200 `image/png` 653301 bytes, webhook dedupe `duplicates=1`, open/accept routes 404
 - Shopee deep-link endpoint live check -> 200 (`foody://driver/rn/@shopee-rn/main/TRANSACTIONS`)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders

@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-23 19:25 Asia/Bangkok
+Updated: 2026-10-23 20:55 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -13,7 +13,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | --- | --- | --- | --- |
 | 1 | Order lifecycle PENDING -> READY -> ASSIGNED -> PICKED_UP -> IN_DELIVERY -> DELIVERED | VERIFIED_COMPLETE | Jest lifecycle suites + E2E flow |
 | 2 | Dispatch only READY orders, nearest-first, up to 4 per driver, pipelined top-up | VERIFIED_COMPLETE | `BatchProcessingService`/API tests + commit `3cd0f14` |
-| 3 | PostgreSQL persistence, Redis realtime/rate limits, auth, idempotency, audit, payments, earnings, push, metrics, PWA | VERIFIED_COMPLETE | 130 passing tests; health reports `storage=postgres`, `redis=true` |
+| 3 | PostgreSQL persistence, Redis realtime/rate limits, auth, idempotency, audit, payments, earnings, push, metrics, PWA | VERIFIED_COMPLETE | 132 passing tests; health reports `storage=postgres` |
 | 4 | Minimum delivery fee 28 THB | VERIFIED_COMPLETE | Config/API tests; commit `dff2607` |
 | 5 | Web UI flows: customer, driver, admin, API docs | VERIFIED_COMPLETE | `node scripts/e2e-ui.js` PASS twice on 420x900 touch viewport |
 | 6 | Local always-on supervisor (app + PostgreSQL + Redis, health-checked restart) | VERIFIED_COMPLETE | Killed app -> restarted; stopped Redis -> auto-started; stopped PostgreSQL -> auto-started; duplicate supervisor blocked by lock |
@@ -25,13 +25,14 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | 12 | Documentation for install/run/maintenance | VERIFIED_COMPLETE | `README.md`, `AGENTS.md`, `STATUS.md`, this file |
 | 13 | Production deployment to a public host | BLOCKED | Requires server/host, domain, TLS origin, real API keys, payment credentials, VAPID keys, and hosting cost |
 | 14 | Shopee Food Driver navigation handoff (`/shopee-driver.html`, `/integrations/shopee-driver/{links,deep-link}`) | VERIFIED_COMPLETE | API tests (`navigation-only`, 4 destinations, 400 on unknown), page served, live curl 200; no private Shopee API or order sync |
-| 15 | Read-only Shopee bridge integration on port 4020 (status/orders/events/screenshot + optional webhook) | VERIFIED_COMPLETE | New `ShopeeBridgeClient`/`ShopeeBridgeService`, API + UI tests, live 4020 sync and screenshot 200; no open/accept proxy routes |
+| 15 | Read-only Shopee bridge integration on port 4020 (status/orders/events/screenshot + optional webhook) | VERIFIED_COMPLETE | `ShopeeBridgeClient`/`ShopeeBridgeService`, API + UI tests, live 4020 sync and screenshot 200; no open/accept proxy routes |
+| 16 | Show incoming order notifications and regular notifications in one Shopee activity feed | VERIFIED_COMPLETE | Admin UI fixture verified both in one time-sorted feed, with linked order displayed once |
 
 ## Current runtime
 
-- Branch `main`, verified code HEAD `d2e4196` (`feat: sync read-only Shopee bridge status`, pushed); this docs update follows as a separate commit.
-- Server: PID 23582, `node dist/index.js`, port 3000, started 18:02 by the supervisor; `dist/` rebuilt from the verified sources at 18:08.
-- Supervisor: PID 21785, `scripts/local-supervisor.sh` (app/PostgreSQL/Redis health loop).
+- Branch `main`, HEAD `3ec342f` (`docs: record verified Shopee bridge sync`); local notification-feed changes are in progress.
+- Server: PID 10769, `node dist/index.js`, port 3000, started by the supervisor at 20:53; `dist/` rebuilt from the current sources.
+- Supervisor: PID 10753, `scripts/local-supervisor.sh` (app/PostgreSQL/Redis health loop).
 - PostgreSQL: PID 5971, port 5432.
 - Redis: PID 30796, 127.0.0.1:6379, data dir `$PREFIX/tmp/opencode` (`fod-redis.rdb`), outside the repo.
 - Logs: `$PREFIX/tmp/opencode/fod-server.log`, `fod-supervisor.log`, `fod-redis.log`, `fod-boot.log`.
@@ -39,15 +40,16 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - LAN URL: `http://10.38.25.243:3000` (same network only; the address changes with the mobile network).
 - Shopee bridge: `http://127.0.0.1:4020`, connected read-only, polling every 15s.
 - Shopee handoff: `http://127.0.0.1:3000/shopee-driver.html`; API endpoints require `x-api-key` when `API_KEYS` is configured.
-- Admin bridge panel: `http://127.0.0.1:3000/admin.html` (status, Shopee orders, events, heatmap screenshot).
+- Admin bridge panel: `http://127.0.0.1:3000/admin.html` (unified chronological Shopee order/notification feed, bridge status, heatmap screenshot).
 
 ## Last verification
 
 - `npm run lint` PASS (exit 0)
 - `npm run typecheck` PASS (exit 0)
 - `npm run build` PASS (exit 0, `dist/` regenerated)
-- `npm test` PASS: 130 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration without `TEST_DATABASE_URL`). One earlier parallel local run hit a transient Redis adapter timeout under load; the isolated suite and two subsequent full runs passed.
-- `node scripts/e2e-ui.js` E2E PASS twice after the bridge UI and `fod-v4` cache bump; latest order `order_dc041782-2490-4699-9dc3-364c0cb7dae8`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`.
+- `npm test -- --runInBand` PASS: 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration without `TEST_DATABASE_URL`).
+- `node scripts/e2e-ui.js` PASS: latest order `order_248cbcae-03f3-4357-a689-1b02ee81207e`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`.
+- Unified feed browser fixture PASS: an order notification linked to `TEST12345` and a regular notification render as two chronological cards, with the order shown only once.
 - Live bridge status: `configured=true`, `capability=read-only`, `reachable=true`, `lastError=null`, 2 orders, 9 events, screenshot available.
 - Live screenshot: `GET /integrations/shopee-bridge/screenshot` -> 200 `image/png`, 653301 bytes.
 - Live webhook: loopback POST -> `{ok:true,received:1,duplicates:0}`; repeat -> `duplicates:1`.
@@ -63,7 +65,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - `src/integrations/ShopeeBridgeService.ts` — cached polling snapshot, event dedupe, screenshot cache, read-only status model
 - `src/index.ts` — `/integrations/shopee-bridge/{status,sync,screenshot}` and HMAC/loopback-limited `/webhooks/shopee-bridge`; lifecycle start/stop and startup log flags
 - `src/config.ts` — `SHOPEE_BRIDGE_URL`, `SHOPEE_BRIDGE_SYNC_MS`, `SHOPEE_BRIDGE_TIMEOUT_MS`, `SHOPEE_BRIDGE_WEBHOOK_SECRET` parsing/validation
-- `public/admin.html`, `public/admin.js`, `public/styles.css` — Thai admin panel for bridge connection, ADB state, Shopee orders, events, heatmap, manual sync
+- `public/admin.html`, `public/admin.js`, `public/styles.css` — Thai admin panel for bridge connection, ADB state, unified Shopee order/notification activity, heatmap, manual sync
 - `public/sw.js` — cache `fod-v4`
 - `src/openapi.ts` — documents the four bridge endpoints
 - `test/ShopeeBridge.test.ts` — client/service/API/webhook/security/screenshot coverage
