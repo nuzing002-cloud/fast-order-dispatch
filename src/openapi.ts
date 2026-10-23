@@ -26,6 +26,35 @@ export const openApiSpec = {
         }
       }
     },
+    '/integrations/shopee-driver/links': {
+      get: {
+        summary: 'List supported Shopee Driver deep links',
+        description:
+          'Navigation-only handoff links for the installed Shopee Food Driver Android app. These links do not exchange order data or authenticate against private Shopee APIs.',
+        responses: { '200': { description: 'Supported deep links' } }
+      }
+    },
+    '/integrations/shopee-driver/deep-link': {
+      get: {
+        summary: 'Get one supported Shopee Driver deep link',
+        description: 'Use the returned URL with Android Linking.openURL or an HTML anchor.',
+        parameters: [
+          {
+            name: 'destination',
+            in: 'query',
+            schema: {
+              type: 'string',
+              enum: ['home', 'notification', 'order-detail', 'transactions'],
+              default: 'home'
+            }
+          }
+        ],
+        responses: {
+          '200': { description: 'Deep link' },
+          '400': { description: 'Unsupported destination' }
+        }
+      }
+    },
     '/drivers': {
       get: {
         summary: 'List drivers',

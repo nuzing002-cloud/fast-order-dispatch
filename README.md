@@ -59,6 +59,21 @@ PGLITE_DATA_DIR=./data/pglite npm run dev
 The service listens on `HOST`/`PORT` from the environment (defaults to `0.0.0.0:3000`).
 Browse `http://127.0.0.1:3000/docs` for the interactive API reference. From another device on the same network, use the host's LAN IP (for example `http://192.168.1.20:3000`).
 
+### Shopee Food Driver handoff
+
+The service includes a navigation-only Android handoff for the installed Shopee Food Driver app. It uses the app's declared `foody://` deep links; it does not call private Shopee endpoints, read app data, or transfer authentication tokens.
+
+Open the companion page at `/shopee-driver.html`, or request a link from the API. When `API_KEYS`/`API_KEY` is configured, pass the key in the `x-api-key` header:
+
+```bash
+curl -H "x-api-key: $API_KEY" 'http://127.0.0.1:3000/integrations/shopee-driver/deep-link?destination=home'
+curl -H "x-api-key: $API_KEY" 'http://127.0.0.1:3000/integrations/shopee-driver/links'
+```
+
+The web console accepts `?api_key=...` (or `#api_key=...`) once, stores it in `localStorage`, and removes it from the address bar.
+
+Supported destinations are `home`, `notification`, `order-detail`, and `transactions`. A React Native companion app can open the returned `url` with `Linking.openURL(url)`. This handoff opens a screen in the Shopee Driver app; it is not an order-sync API. Automatic order/status synchronization requires an authorized Shopee Partner API or webhook and should be added as a separate provider adapter.
+
 ## Local always-on runtime (Termux)
 
 `scripts/local-supervisor.sh` keeps PostgreSQL, Redis, and the API running on this device. It starts the app from `dist/`, checks `/health`, restarts it after crashes, and starts the databases when they are down.

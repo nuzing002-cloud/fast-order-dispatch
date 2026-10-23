@@ -1,10 +1,11 @@
-const CACHE = 'fod-v2';
+const CACHE = 'fod-v3';
 const PRECACHE = [
   '/',
   '/index.html',
   '/customer.html',
   '/driver.html',
   '/admin.html',
+  '/shopee-driver.html',
   '/styles.css',
   '/common.js',
   '/customer.js',
@@ -31,7 +32,8 @@ const SKIP = [
   '/metrics',
   '/audit',
   '/payments',
-  '/dispatch'
+  '/dispatch',
+  '/integrations/'
 ];
 
 self.addEventListener('install', (event) => {

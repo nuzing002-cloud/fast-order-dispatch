@@ -2,7 +2,7 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-22 (Asia/Bangkok)
+Updated: 2026-10-23 (Asia/Bangkok)
 
 ## Current state
 
@@ -20,6 +20,8 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - Dispatch only restaurant-ready orders; nearest-first batching, up to 4 orders per driver, pipelined top-up
 - PostgreSQL persistence, auth roles/API keys, idempotency, audit log, rate limiting, payments/refunds, driver earnings/payouts, decline/pause, web push, Prometheus metrics, PWA UI
 - Minimum delivery fee 28 THB (`MIN_DELIVERY_FEE`), enforced in API and UI
+- Shopee Food Driver navigation handoff: `/shopee-driver.html` plus `/integrations/shopee-driver/links` and `/integrations/shopee-driver/deep-link` (navigation-only, no private API or order sync)
+- Web console API-key bootstrap (`?api_key=`/`#api_key=`) with validation and URL cleanup
 - Production Docker/Caddy deployment files, prune script, OpenAPI docs
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
 - E2E harness: creates an order, clicks READY in the admin UI (real dispatch), advances only that order through the driver UI to `DELIVERED`, verifies persistence in admin, and cleans up in `finally`
@@ -30,17 +32,19 @@ Updated: 2026-10-22 (Asia/Bangkok)
 - `npm run lint` pass
 - `npm run typecheck` pass
 - `npm run build` pass
-- `npm test` 120 passed / 4 skipped (1 Postgres integration suite skipped without `TEST_DATABASE_URL`)
-- `node scripts/e2e-ui.js` E2E PASS twice consecutively (home, PWA, admin READY -> dispatch, customer, driver -> DELIVERED, admin persistence; no console errors)
+- `npm test` 121 passed / 4 skipped, 19 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
+- `node scripts/e2e-ui.js` E2E PASS twice consecutively after cache bump to `fod-v3` (home, PWA, admin READY -> dispatch, customer, driver -> DELIVERED, admin persistence; no console errors); use `E2E_API_KEY`/`API_KEY` when auth is enabled
+- Shopee deep-link endpoint live check -> 200 (`foody://driver/rn/@shopee-rn/main/TRANSACTIONS`)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
-- Supervisor: app kill -> auto-restarted; Redis shutdown -> restarted with data dir `$PREFIX/tmp/opencode`; PostgreSQL reachable on 5432; duplicate supervisor exits via lock
-- GitHub Actions run `39732959736` success (fix commit `76f5b9c`)
+- Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock
+- GitHub Actions run `39732959736` success (prior fix commit `76f5b9c`); CI for this batch watched after push
 
 ## Remaining
 
+- Commit/push the Shopee handoff batch and confirm CI is green.
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
 - Reboot autostart still needs a real reboot to confirm.
-- No code work is pending.
+- Shopee order/status synchronization is out of scope for the deep-link handoff; it needs an authorized Shopee Partner API/webhook.
 
 ## Commands
 

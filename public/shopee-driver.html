@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shopee Driver Bridge</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    main { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    .bridge-card { display: grid; gap: .75rem; }
+    .bridge-card a { display: block; text-decoration: none; }
+    .bridge-note { color: #64748b; line-height: 1.6; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Shopee Driver Bridge</h1>
+    <p class="bridge-note">
+      หน้านี้ใช้ Android Deep Link เพื่อเปิดหน้าที่แอป Shopee Food Driver เปิดเผยไว้
+      เป็นการนำทางเข้าแอปเท่านั้น ไม่ได้อ่านหรือส่งข้อมูลออเดอร์อัตโนมัติ
+    </p>
+    <section class="bridge-card" aria-label="Shopee Driver destinations">
+      <a class="button primary" href="foody://driver/n/driver/home">เปิดหน้า Home</a>
+      <a class="button" href="foody://driver/n/driver/notification">เปิดการแจ้งเตือน</a>
+      <a class="button" href="foody://driver/rn/@shopee-rn/main/ORDER_DETAIL">เปิดรายละเอียดออเดอร์</a>
+      <a class="button" href="foody://driver/rn/@shopee-rn/main/TRANSACTIONS">เปิดธุรกรรม</a>
+    </section>
+    <p class="bridge-note">
+      ถ้ากดแล้วไม่เปิดแอป ให้ตรวจว่าติดตั้งแพ็กเกจ
+      <code>com.shopee.foody.driver.th</code> อยู่ในเครื่อง
+    </p>
+  </main>
+</body>
+</html>

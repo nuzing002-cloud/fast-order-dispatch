@@ -6,6 +6,7 @@ const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:3000';
 const CHROME = process.env.CHROME_PATH || `${process.env.PREFIX}/bin/chromium-browser`;
 const OUT = process.env.E2E_OUT_DIR || path.join(process.env.TMPDIR || '/tmp', 'fod-e2e');
 const DRIVER = '1388246780';
+const API_KEY = process.env.API_KEY || process.env.E2E_API_KEY || '';
 
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -38,7 +39,9 @@ async function text(page, selector) {
 const LOCAL = /^https?:\/\/(127\.0\.0\.1|localhost)(?=[:/]|$)/.test(BASE);
 
 async function request(path, options) {
-  const response = await fetch(`${BASE}${path}`, options);
+  const opts = { ...(options || {}) };
+  if (API_KEY) opts.headers = { ...(opts.headers || {}), 'x-api-key': API_KEY };
+  const response = await fetch(`${BASE}${path}`, opts);
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(`${options?.method || 'GET'} ${path} failed: ${response.status} ${JSON.stringify(body)}`);
@@ -74,6 +77,15 @@ async function run() {
     args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--disable-dbus', '--window-size=420,900']
   });
   const page = await browser.newPage();
+  if (API_KEY) {
+    await page.evaluateOnNewDocument((key) => {
+      try {
+        localStorage.setItem('fod.apiKey', key);
+      } catch (error) {
+        void error;
+      }
+    }, API_KEY);
+  }
   await page.setViewport({ width: 420, height: 900, isMobile: true, hasTouch: true });
   const errors = [];
   const results = {};

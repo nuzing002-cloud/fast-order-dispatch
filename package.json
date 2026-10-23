@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node dist/index.js",
     "supervisor": "bash scripts/local-supervisor.sh",
-    "dev": "ts-node src/index.ts",
+    "dev": "ts-node --files src/index.ts",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc",
     "lint": "node node_modules/eslint/bin/eslint.js src test",

@@ -55,6 +55,33 @@
     });
   }
 
+  function applyKeyFromUrl() {
+    const params = new URLSearchParams(location.search);
+    let key = params.get('api_key') || params.get('key');
+    if (!key && location.hash.length > 1) {
+      const hashParams = new URLSearchParams(location.hash.slice(1));
+      key = hashParams.get('api_key') || hashParams.get('key');
+    }
+    if (!key) return;
+    setKey(key);
+    try {
+      const url = new URL(location.href);
+      url.searchParams.delete('api_key');
+      url.searchParams.delete('key');
+      if (url.hash.length > 1) {
+        const hashParams = new URLSearchParams(url.hash.slice(1));
+        hashParams.delete('api_key');
+        hashParams.delete('key');
+        url.hash = hashParams.toString();
+      }
+      history.replaceState(null, '', url.pathname + url.search + url.hash);
+    } catch (error) {
+      void error;
+    }
+  }
+
+  applyKeyFromUrl();
+
   function getDriverId() {
     return localStorage.getItem(DRIVER_STORAGE) || '';
   }
@@ -197,9 +224,21 @@
     if (!input) return;
     input.value = getKey();
     setKey(getKey());
-    function commit() {
-      setKey(input.value);
-      toast(input.value.trim() ? 'บันทึก API key แล้ว' : 'ล้าง API key แล้ว', 'success');
+    async function commit() {
+      const value = input.value.trim();
+      if (value) {
+        try {
+          const response = await fetch('/drivers', { headers: { 'x-api-key': value } });
+          if (response.status === 401) {
+            toast('API key ไม่ถูกต้อง', 'error');
+            return;
+          }
+        } catch (error) {
+          void error;
+        }
+      }
+      setKey(value);
+      toast(value ? 'บันทึก API key แล้ว' : 'ล้าง API key แล้ว', 'success');
     }
     if (save) save.addEventListener('click', commit);
     input.addEventListener('keydown', (event) => {

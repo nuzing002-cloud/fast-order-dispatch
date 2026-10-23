@@ -48,6 +48,55 @@ test('GET /health reports service state', async () => {
   expect(body.storage).toBe('memory');
 });
 
+test('exposes navigation-only Shopee Driver deep links', async () => {
+  const links = await fetch(`${baseUrl}/integrations/shopee-driver/links`);
+  expect(links.status).toBe(200);
+  const linksBody = await links.json();
+  expect(linksBody.targetPackage).toBe('com.shopee.foody.driver.th');
+  expect(linksBody.capability).toBe('navigation-only');
+  expect(linksBody.links).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        destination: 'home',
+        url: 'foody://driver/n/driver/home'
+      }),
+      expect.objectContaining({
+        destination: 'notification',
+        url: 'foody://driver/n/driver/notification'
+      })
+    ])
+  );
+
+  const selected = await fetch(
+    `${baseUrl}/integrations/shopee-driver/deep-link?destination=transactions`
+  );
+  expect(selected.status).toBe(200);
+  expect(await selected.json()).toEqual({
+    destination: 'transactions',
+    url: 'foody://driver/rn/@shopee-rn/main/TRANSACTIONS',
+    targetPackage: 'com.shopee.foody.driver.th',
+    capability: 'navigation-only'
+  });
+
+  const fallback = await fetch(`${baseUrl}/integrations/shopee-driver/deep-link`);
+  expect(fallback.status).toBe(200);
+  expect(await fallback.json()).toEqual({
+    destination: 'home',
+    url: 'foody://driver/n/driver/home',
+    targetPackage: 'com.shopee.foody.driver.th',
+    capability: 'navigation-only'
+  });
+
+  const page = await fetch(`${baseUrl}/shopee-driver.html`);
+  expect(page.status).toBe(200);
+  expect(await page.text()).toContain('foody://driver/n/driver/home');
+
+  const invalid = await fetch(
+    `${baseUrl}/integrations/shopee-driver/deep-link?destination=private-api`
+  );
+  expect(invalid.status).toBe(400);
+});
+
 test('serves the web console', async () => {
   const response = await fetch(`${baseUrl}/`);
   expect(response.status).toBe(200);
@@ -60,6 +109,7 @@ test('serves all console pages and assets', async () => {
     '/customer.html',
     '/driver.html',
     '/admin.html',
+    '/shopee-driver.html',
     '/styles.css',
     '/common.js',
     '/customer.js',
@@ -82,7 +132,7 @@ test('serves PWA manifest, service worker, and icons', async () => {
   const sw = await fetch(`${baseUrl}/sw.js`);
   expect(sw.status).toBe(200);
   expect(sw.headers.get('content-type')).toContain('javascript');
-  expect(await sw.text()).toContain('fod-v2');
+  expect(await sw.text()).toContain('fod-v3');
 
   for (const icon of [
     '/favicon.svg',

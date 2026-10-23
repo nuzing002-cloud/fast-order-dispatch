@@ -9,7 +9,7 @@ import express, {
 import { createServer } from 'http';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { ApiKeyInput } from './auth';
+import { ApiKeyInput, AuthenticatedKey } from './auth';
 import { AppConfig, loadConfig } from './config';
 import { ConflictError, HttpError, NotFoundError, ValidationError } from './errors';
 import { createIdempotencyMiddleware, IdempotencyStore } from './idempotency';
@@ -27,6 +27,11 @@ import { renderPrometheusMetrics } from './prometheus';
 import { createPushNotifier, PushNotifier } from './push';
 import { createRedisRateLimiter, RateLimiterHandle } from './rateLimiter';
 import { attachRealtime } from './realtime';
+import {
+  buildShopeeDriverLink,
+  listShopeeDriverLinks,
+  parseShopeeDriverDestination
+} from './integrations/ShopeeDriverLinks';
 import {
   BatchProcessingService,
   DISPATCH_DRIVER_ID,
@@ -380,7 +385,7 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
   }
 
   const audit = async (
-    request: Request,
+    request: Request & { auth?: AuthenticatedKey },
     action: string,
     entityType: 'order' | 'payment' | 'driver' | 'batch' | 'system',
     entityId: string,
@@ -412,6 +417,25 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         uptimeSeconds: Math.round(process.uptime()),
         timestamp: new Date().toISOString()
       });
+    })
+  );
+
+  app.get(
+    '/integrations/shopee-driver/links',
+    asyncHandler(async (_request, response) => {
+      response.json({
+        targetPackage: 'com.shopee.foody.driver.th',
+        capability: 'navigation-only',
+        links: listShopeeDriverLinks()
+      });
+    })
+  );
+
+  app.get(
+    '/integrations/shopee-driver/deep-link',
+    asyncHandler(async (request, response) => {
+      const destination = parseShopeeDriverDestination(request.query.destination);
+      response.json(buildShopeeDriverLink(destination));
     })
   );
 
