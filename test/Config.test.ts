@@ -16,6 +16,7 @@ test('uses development defaults', () => {
   expect(config.shopeeBridgeWebhookSecret).toBeUndefined();
   expect(config.shopeeBridgeSyncMs).toBe(15_000);
   expect(config.shopeeBridgeTimeoutMs).toBe(5_000);
+  expect(config.shopeeBridgeStaleMs).toBe(60_000);
 });
 
 test('parses configured values', () => {
@@ -46,12 +47,14 @@ test('parses Shopee bridge configuration', () => {
     SHOPEE_BRIDGE_URL: 'http://127.0.0.1:4020/',
     SHOPEE_BRIDGE_WEBHOOK_SECRET: ' bridge-secret ',
     SHOPEE_BRIDGE_SYNC_MS: '20000',
-    SHOPEE_BRIDGE_TIMEOUT_MS: '2500'
+    SHOPEE_BRIDGE_TIMEOUT_MS: '2500',
+    SHOPEE_BRIDGE_STALE_MS: '90000'
   });
   expect(config.shopeeBridgeUrl).toBe('http://127.0.0.1:4020');
   expect(config.shopeeBridgeWebhookSecret).toBe('bridge-secret');
   expect(config.shopeeBridgeSyncMs).toBe(20_000);
   expect(config.shopeeBridgeTimeoutMs).toBe(2_500);
+  expect(config.shopeeBridgeStaleMs).toBe(90_000);
 });
 
 test('rejects invalid Shopee bridge configuration', () => {
@@ -68,6 +71,9 @@ test('rejects invalid Shopee bridge configuration', () => {
   expect(() => loadConfig({ SHOPEE_BRIDGE_SYNC_MS: '500' })).toThrow('SHOPEE_BRIDGE_SYNC_MS');
   expect(() => loadConfig({ SHOPEE_BRIDGE_TIMEOUT_MS: '50' })).toThrow(
     'SHOPEE_BRIDGE_TIMEOUT_MS'
+  );
+  expect(() => loadConfig({ SHOPEE_BRIDGE_STALE_MS: '500' })).toThrow(
+    'SHOPEE_BRIDGE_STALE_MS'
   );
 });
 

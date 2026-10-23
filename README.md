@@ -82,6 +82,7 @@ The local bridge on `127.0.0.1:4020` is the only process that owns ADB, UI autom
 SHOPEE_BRIDGE_URL=http://127.0.0.1:4020
 SHOPEE_BRIDGE_SYNC_MS=15000
 SHOPEE_BRIDGE_TIMEOUT_MS=5000
+SHOPEE_BRIDGE_STALE_MS=60000
 ```
 
 When configured, the server polls the bridge every `SHOPEE_BRIDGE_SYNC_MS` and caches:
@@ -90,6 +91,10 @@ When configured, the server polls the bridge every `SHOPEE_BRIDGE_SYNC_MS` and c
 - `/events?limit=50` (deduplicated, newest first)
 - `/orders?limit=50`
 - `/area/latest.png` (latest heatmap screenshot)
+
+The status endpoint also reports `dataFreshness` (`fresh`, `stale`, `unknown`, or `offline`).
+The service does not treat a failed refresh as a healthy bridge, so cached orders and
+locations are never presented as current after the bridge stops responding.
 
 The admin page shows the bridge status, Shopee orders, recent events, and the latest heatmap image. The integration is intentionally read-only; there are no `/open` or `/accept` proxy routes. Adding those requires duplicate detection and a safe order match/confirmation flow first.
 

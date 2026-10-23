@@ -238,3 +238,81 @@ test('reports unreachable bridges without throwing', async () => {
   expect(status.reachable).toBe(false);
   expect(status.lastError).toContain('unreachable');
 });
+
+test('marks an otherwise reachable bridge stale when its health timestamp is old', async () => {
+  const staleHealth = {
+    ok: true,
+    lastPollAt: '2020-01-01T00:00:00.000Z'
+  };
+  const staleClient = new ShopeeBridgeClient({
+    baseUrl: 'http://bridge.test',
+    fetchImpl: (async (input) => {
+      const path = new URL(String(input)).pathname;
+      const body = path === '/health'
+        ? staleHealth
+        : path === '/events'
+          ? { events: [] }
+          : path === '/orders'
+            ? { orders: [] }
+            : undefined;
+      if (path === '/area/latest.png') {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }) as typeof fetch
+  });
+  const staleService = new ShopeeBridgeService({
+    client: staleClient,
+    syncIntervalMs: 60_000,
+    staleAfterMs: 1_000
+  });
+
+  const status = await staleService.refresh();
+  expect(status.reachable).toBe(true);
+  expect(status.dataFreshness.state).toBe('stale');
+  expect(status.dataFreshness.stale).toBe(true);
+  expect(status.dataFreshness.source).toBe('health');
+});
+
+test('does not report cached data as reachable after a refresh failure', async () => {
+  let online = true;
+  const client = new ShopeeBridgeClient({
+    baseUrl: 'http://bridge.test',
+    fetchImpl: (async (input) => {
+      if (!online) throw new Error('bridge stopped');
+      const path = new URL(String(input)).pathname;
+      const body = path === '/health'
+        ? { ok: true, lastPollAt: new Date().toISOString() }
+        : path === '/events'
+          ? { events: [] }
+          : path === '/orders'
+            ? { orders: [] }
+            : undefined;
+      if (path === '/area/latest.png') {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }) as typeof fetch
+  });
+  const service = new ShopeeBridgeService({
+    client,
+    syncIntervalMs: 60_000
+  });
+
+  const onlineStatus = await service.refresh();
+  expect(onlineStatus.reachable).toBe(true);
+  expect(onlineStatus.dataFreshness.state).toBe('fresh');
+
+  online = false;
+  const offlineStatus = await service.refresh();
+  expect(offlineStatus.reachable).toBe(false);
+  expect(offlineStatus.lastRefreshSucceeded).toBe(false);
+  expect(offlineStatus.dataFreshness.state).toBe('offline');
+  expect(offlineStatus.orders).toEqual([]);
+});

@@ -67,6 +67,14 @@
               <button id="locateButton" class="btn-small">ใช้ตำแหน่งปัจจุบัน</button>
               <button id="saveLocation" class="btn-primary btn-small">บันทึกตำแหน่ง</button>
             </div>
+            <div class="row" style="margin-top: 12px">
+              <button id="startLocationTracking" class="btn-small">เริ่มติดตามตำแหน่ง</button>
+              <button id="stopLocationTracking" class="btn-small" disabled>หยุดติดตาม</button>
+              <span id="locationTrackingState" class="badge status-PENDING">ยังไม่เริ่มติดตาม</span>
+            </div>
+            <p class="muted small" style="margin-bottom: 0">
+              การติดตามจะส่งตำแหน่งอัตโนมัติขณะหน้านี้เปิดอยู่ และหยุดเมื่อออกจากหน้า
+            </p>
           </article>
 
           <article class="card">

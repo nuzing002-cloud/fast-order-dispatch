@@ -469,14 +469,26 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
           baseUrl: null,
           reachable: false,
           syncIntervalMs: null,
+          staleAfterMs: null,
           lastAttemptAt: null,
           lastSyncAt: null,
           lastEventAt: null,
+          lastWebhookAt: null,
+          lastRefreshSucceeded: false,
           lastError: 'Shopee bridge is not configured',
           health: null,
           events: [],
           orders: [],
           screenshot: { available: false, bytes: 0, updatedAt: null },
+          dataFreshness: {
+            state: 'offline',
+            stale: true,
+            ageMs: null,
+            thresholdMs: null,
+            observedAt: null,
+            source: 'none',
+            reason: 'bridge is not configured'
+          },
           safety: {
             commandsExposed: false,
             autoAcceptOwner: 'shopee-bridge',
@@ -1285,7 +1297,8 @@ export const shopeeBridgeService = config.shopeeBridgeUrl
         baseUrl: config.shopeeBridgeUrl,
         timeoutMs: config.shopeeBridgeTimeoutMs
       }),
-      syncIntervalMs: config.shopeeBridgeSyncMs
+      syncIntervalMs: config.shopeeBridgeSyncMs,
+      staleAfterMs: config.shopeeBridgeStaleMs
     })
   : undefined;
 export const app = createDispatchApp({

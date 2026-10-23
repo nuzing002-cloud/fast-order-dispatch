@@ -40,6 +40,7 @@ export interface AppConfig {
   shopeeBridgeWebhookSecret?: string;
   shopeeBridgeSyncMs: number;
   shopeeBridgeTimeoutMs: number;
+  shopeeBridgeStaleMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -138,6 +139,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       5_000,
       100,
       'SHOPEE_BRIDGE_TIMEOUT_MS'
+    ),
+    shopeeBridgeStaleMs: integer(
+      env.SHOPEE_BRIDGE_STALE_MS,
+      60_000,
+      1_000,
+      'SHOPEE_BRIDGE_STALE_MS'
     )
   };
 

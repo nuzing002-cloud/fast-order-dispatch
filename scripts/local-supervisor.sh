@@ -49,6 +49,12 @@ app_running() {
   pgrep -xf "node dist/index.js" >/dev/null
 }
 
+start_app() {
+  # The project selects DATABASE_URL or PGLITE_DATA_DIR exclusively. Remove
+  # legacy shell variables so an old Termux session cannot override .env.
+  env -u PGLITE_DATA_DIR -u DB_PATH node dist/index.js >>"$APP_LOG" 2>&1 < /dev/null 9>&- &
+}
+
 app_healthy() {
   curl -sf -m 5 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1
 }
@@ -81,7 +87,9 @@ while true; do
     fi
     if [ -f dist/index.js ]; then
       log "starting app"
-      nohup node dist/index.js >>"$APP_LOG" 2>&1 < /dev/null 9>&- &
+      # Start the app in a detached process with only supported database
+      # selectors. The wrapper avoids inheriting stale PGLite/SQLite settings.
+      start_app
     fi
   fi
 

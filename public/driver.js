@@ -9,17 +9,173 @@
   const earningsBox = document.getElementById('earningsBox');
   const enablePushButton = document.getElementById('enablePush');
   const pushState = document.getElementById('pushState');
+  const startLocationTrackingButton = document.getElementById('startLocationTracking');
+  const stopLocationTrackingButton = document.getElementById('stopLocationTracking');
+  const locationTrackingState = document.getElementById('locationTrackingState');
 
   idInput.value = F.getDriverId() || '1388246780';
 
   let currentDriver = null;
   let jobs = [];
+  let locationWatchId = null;
+  let locationTrackingDriverId = null;
+  let locationWatchGeneration = 0;
+  let pendingLocation = null;
+  let locationUpdateTimer = null;
+  let locationUpdateInFlight = false;
+  let lastLocationUpdateAt = 0;
+  const locationUpdateIntervalMs = 15000;
+
+  function setLocationTrackingState(text, status) {
+    locationTrackingState.textContent = text;
+    locationTrackingState.className = `badge status-${status}`;
+  }
+
+  function stopLocationTracking() {
+    locationWatchGeneration += 1;
+    if (locationWatchId !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(locationWatchId);
+    }
+    locationWatchId = null;
+    locationTrackingDriverId = null;
+    pendingLocation = null;
+    if (locationUpdateTimer !== null) {
+      clearTimeout(locationUpdateTimer);
+      locationUpdateTimer = null;
+    }
+    startLocationTrackingButton.disabled = false;
+    stopLocationTrackingButton.disabled = true;
+    setLocationTrackingState('หยุดติดตามแล้ว', 'PENDING');
+  }
+
+  function scheduleLocationUpdate() {
+    if (
+      locationUpdateTimer !== null ||
+      locationUpdateInFlight ||
+      !pendingLocation ||
+      locationWatchId === null
+    ) {
+      return;
+    }
+
+    const delay = Math.max(0, locationUpdateIntervalMs - (Date.now() - lastLocationUpdateAt));
+    locationUpdateTimer = setTimeout(async () => {
+      locationUpdateTimer = null;
+      if (!pendingLocation || locationWatchId === null || !currentDriver) return;
+
+      const targetDriverId = locationTrackingDriverId;
+      const location = pendingLocation;
+      pendingLocation = null;
+      locationUpdateInFlight = true;
+
+      try {
+        const payload = await F.request(`/drivers/${encodeURIComponent(targetDriverId)}`, {
+          method: 'PATCH',
+          body: {
+            currentLatitude: location.latitude,
+            currentLongitude: location.longitude
+          }
+        });
+        lastLocationUpdateAt = Date.now();
+        if (currentDriver?.id === targetDriverId && locationTrackingDriverId === targetDriverId) {
+          currentDriver = payload.driver || payload;
+          renderDriver();
+          setLocationTrackingState('กำลังติดตาม · บันทึกล่าสุด ' + F.time(currentDriver.lastLocationUpdate), 'AVAILABLE');
+        }
+      } catch (error) {
+        lastLocationUpdateAt = Date.now();
+        if (currentDriver?.id === targetDriverId && locationTrackingDriverId === targetDriverId) {
+          F.toast(`บันทึกตำแหน่งอัตโนมัติไม่สำเร็จ: ${error.message}`, 'error');
+          setLocationTrackingState('ติดตามอยู่ · บันทึกไม่สำเร็จ', 'FAILED');
+        }
+      } finally {
+        locationUpdateInFlight = false;
+        scheduleLocationUpdate();
+      }
+    }, delay);
+  }
+
+  function handleTrackedPosition(position, targetDriverId, generation) {
+    if (
+      locationWatchId === null ||
+      locationWatchGeneration !== generation ||
+      locationTrackingDriverId !== targetDriverId ||
+      currentDriver?.id !== targetDriverId
+    ) {
+      return;
+    }
+
+    const { latitude, longitude, accuracy } = position.coords;
+    const age = Date.now() - position.timestamp;
+    if (
+      !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+      !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
+      !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 1000 ||
+      !Number.isFinite(position.timestamp) || age < 0 || age > 30000
+    ) {
+      setLocationTrackingState('ได้รับพิกัดเก่าหรือไม่แม่นยำพอ', 'FAILED');
+      return;
+    }
+
+    document.getElementById('latInput').value = latitude.toFixed(6);
+    document.getElementById('lngInput').value = longitude.toFixed(6);
+    pendingLocation = { latitude, longitude };
+    setLocationTrackingState('ติดตามอยู่ · ความแม่นยำประมาณ ' + Math.round(accuracy) + ' ม.', 'AVAILABLE');
+    scheduleLocationUpdate();
+  }
+
+  function startLocationTracking() {
+    if (!currentDriver) {
+      F.toast('โหลดข้อมูลคนขับก่อนเริ่มติดตาม', 'error');
+      return;
+    }
+    if (!window.isSecureContext || !navigator.geolocation) {
+      F.toast('การติดตามตำแหน่งต้องใช้ HTTPS หรือ localhost และเบราว์เซอร์ที่รองรับ', 'error');
+      return;
+    }
+
+    stopLocationTracking();
+    const targetDriverId = currentDriver.id;
+    const generation = locationWatchGeneration;
+    locationTrackingDriverId = targetDriverId;
+    lastLocationUpdateAt = 0;
+    locationWatchId = navigator.geolocation.watchPosition(
+      (position) => handleTrackedPosition(position, targetDriverId, generation),
+      (error) => {
+        if (locationWatchGeneration !== generation) return;
+        const messages = {
+          1: 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง',
+          2: 'ระบุตำแหน่งไม่ได้',
+          3: 'หมดเวลารอตำแหน่ง'
+        };
+        setLocationTrackingState(messages[error.code] || 'เกิดข้อผิดพลาดจากตำแหน่ง', 'FAILED');
+        F.toast(messages[error.code] || `ติดตามตำแหน่งไม่สำเร็จ: ${error.message}`, 'error');
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
+    startLocationTrackingButton.disabled = true;
+    stopLocationTrackingButton.disabled = false;
+    setLocationTrackingState('กำลังรอพิกัดจากอุปกรณ์', 'PENDING');
+  }
+
+  startLocationTrackingButton.addEventListener('click', startLocationTracking);
+  stopLocationTrackingButton.addEventListener('click', stopLocationTracking);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && locationWatchId !== null) {
+      stopLocationTracking();
+      setLocationTrackingState('หยุดแล้วเมื่อออกจากหน้า', 'PENDING');
+    }
+  });
+  window.addEventListener('pagehide', stopLocationTracking);
 
   async function loadDriver() {
     const id = idInput.value.trim();
     if (!id) {
       F.toast('กรุณากรอก Driver ID', 'error');
       return;
+    }
+    if (locationTrackingDriverId && locationTrackingDriverId !== id) {
+      stopLocationTracking();
     }
     F.setDriverId(id);
     try {

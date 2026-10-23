@@ -80,7 +80,7 @@ export const openApiSpec = {
       get: {
         summary: 'Read-only Shopee bridge status',
         description:
-          'Cached health, events, orders, and screenshot metadata for port 4020. This API exposes no open/accept commands.',
+          'Cached health, events, orders, and screenshot metadata for port 4020. The response includes dataFreshness so stale cached state is distinguishable from live state. This API exposes no open/accept commands.',
         responses: { '200': { description: 'Bridge status' } }
       }
     },

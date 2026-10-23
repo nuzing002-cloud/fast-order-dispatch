@@ -162,15 +162,28 @@
     const events = status.events || [];
     const autoAccept = health.autoAccept === true;
     const autoOpen = health.autoOpen === true;
+    const freshness = status.dataFreshness || { state: 'unknown', reason: 'ไม่มีข้อมูล freshness' };
+    const bridgeOnline = status.reachable === true;
+    const bridgeFresh = freshness.state === 'fresh';
     const lastSync = status.lastSyncAt ? F.time(status.lastSyncAt) : 'ยังไม่เคย';
     const interval = status.syncIntervalMs
       ? `${Math.round(status.syncIntervalMs / 1000)} วิ`
       : '-';
 
-    bridgeBadge.className = `badge ${status.reachable ? 'status-AVAILABLE' : 'status-FAILED'}`;
-    bridgeBadge.textContent = status.reachable ? 'เชื่อมต่อ 4020 แล้ว' : '4020 ออฟไลน์';
+    bridgeBadge.className = `badge ${bridgeOnline && bridgeFresh ? 'status-AVAILABLE' : 'status-FAILED'}`;
+    bridgeBadge.textContent = bridgeOnline
+      ? bridgeFresh
+        ? 'เชื่อมต่อ 4020 แล้ว'
+        : freshness.state === 'stale'
+          ? 'ข้อมูล 4020 ค้าง'
+          : '4020 ยังไม่ยืนยันข้อมูลสด'
+      : '4020 ออฟไลน์';
     bridgeStats.innerHTML = [
-      metricCard('การเชื่อมต่อ', status.reachable ? 'ออนไลน์' : 'ออฟไลน์', status.baseUrl || '-'),
+      metricCard(
+        'การเชื่อมต่อ',
+        bridgeOnline ? (bridgeFresh ? 'ออนไลน์ · สด' : 'ออนไลน์ · ค้าง') : 'ออฟไลน์',
+        freshness.reason || status.baseUrl || '-'
+      ),
       metricCard(
         'ADB',
         adb.ok === true ? 'พร้อม' : 'ไม่พร้อม',
