@@ -7,12 +7,14 @@ Updated: 2026-10-23 (Asia/Bangkok)
 ## Current state
 
 - Branch: `main`, synced with `origin/main`
-- HEAD: `4ab0e65` (`feat: add Shopee driver navigation handoff`)
-- CI: GitHub Actions run `39926659575` green (`build-and-test` + `docker` smoke test)
-- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL + Redis)
-- Supervisor: running (`scripts/local-supervisor.sh`), restarts app and databases on failure
-- Reboot autostart: `~/.termux/boot/30-fast-order-dispatch.sh` (Termux:Boot installed)
-- Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis}.log`
+- Verified code HEAD: `d2e4196` (`feat: sync read-only Shopee bridge status`); this docs update follows as a separate commit
+- CI: GitHub Actions run `39951520361` green (`build-and-test` + `docker` smoke test)
+- Local server: running on `http://127.0.0.1:3000` from `dist/` (PostgreSQL + Redis), PID 23582
+- Supervisor: running (`scripts/local-supervisor.sh`), PID 21785; restarts app and databases on failure
+- Shopee bridge: `http://127.0.0.1:4020` connected read-only, `reachable=true`, 15s polling, 2 orders / 9 events, heatmap PNG available
+- Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` restored and manually exercised; bridge hook also installed
+- LAN URL: `http://10.38.25.243:3000` (dynamic address)
+- Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis,boot}.log`
 
 ## Completed
 
@@ -21,6 +23,7 @@ Updated: 2026-10-23 (Asia/Bangkok)
 - PostgreSQL persistence, auth roles/API keys, idempotency, audit log, rate limiting, payments/refunds, driver earnings/payouts, decline/pause, web push, Prometheus metrics, PWA UI
 - Minimum delivery fee 28 THB (`MIN_DELIVERY_FEE`), enforced in API and UI
 - Shopee Food Driver navigation handoff: `/shopee-driver.html` plus `/integrations/shopee-driver/links` and `/integrations/shopee-driver/deep-link` (navigation-only, no private API or order sync)
+- Read-only Shopee bridge integration: `/integrations/shopee-bridge/{status,sync,screenshot}` and `/webhooks/shopee-bridge`; typed client/service, HMAC or loopback-only webhook, event dedupe, screenshot validation, admin panel, no open/accept proxy routes
 - Web console API-key bootstrap (`?api_key=`/`#api_key=`) with validation and URL cleanup
 - Production Docker/Caddy deployment files, prune script, OpenAPI docs
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
@@ -32,18 +35,21 @@ Updated: 2026-10-23 (Asia/Bangkok)
 - `npm run lint` pass
 - `npm run typecheck` pass
 - `npm run build` pass
-- `npm test` 121 passed / 4 skipped, 19 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
-- `node scripts/e2e-ui.js` E2E PASS twice consecutively after cache bump to `fod-v3` (home, PWA, admin READY -> dispatch, customer, driver -> DELIVERED, admin persistence; no console errors); use `E2E_API_KEY`/`API_KEY` when auth is enabled
+- `npm test` 130 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`); one earlier parallel run hit a transient Redis adapter timeout, reruns passed
+- `node scripts/e2e-ui.js` E2E PASS twice after the bridge UI/cache bump `fod-v4`; latest order `order_dc041782-...` DELIVERED, `consoleErrors: []`
+- Bridge live: status 200 read-only/reachable, sync 200, screenshot 200 `image/png` 653301 bytes, webhook dedupe `duplicates=1`, open/accept routes 404
 - Shopee deep-link endpoint live check -> 200 (`foody://driver/rn/@shopee-rn/main/TRANSACTIONS`)
 - Driver after E2E: `AVAILABLE`, 0 assigned, accepts new orders
-- Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock
-- GitHub Actions run `39926659575` success (commit `4ab0e65`)
+- Supervisor restarted the app after kill; `/health` 200; PostgreSQL and Redis up; duplicate supervisor exits via lock; boot hook re-run kept a single supervisor
+- LAN health check -> 200 on `http://10.38.25.243:3000/health`
+- GitHub Actions run `39951520361` success (commit `d2e4196`)
 
 ## Remaining
 
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
-- Reboot autostart still needs a real reboot to confirm.
-- Shopee order/status synchronization is out of scope for the deep-link handoff; it needs an authorized Shopee Partner API/webhook.
+- Real reboot test for the FOD and bridge boot hooks (installed and exercised manually, but no reboot performed).
+- Shopee order/status synchronization is out of scope for the read-only bridge handoff; it needs an authorized Shopee Partner API/webhook plus order matching, duplicate detection, and confirmation before any write action.
+- Bridge events currently mirror auto-accept failures and do not carry fare/order numbers until the bridge successfully accepts a job; the screenshot depends on the bridge area check.
 
 ## Commands
 
@@ -55,12 +61,23 @@ npm run supervisor
 bash ~/.termux/boot/30-fast-order-dispatch.sh   # idempotent; safe to re-run
 ```
 
+Bridge checks:
+
+```bash
+KEY=$(sed -n 's/^API_KEYS=\([^:]*\).*/\1/p' .env)
+curl -H "x-api-key: $KEY" http://127.0.0.1:3000/integrations/shopee-bridge/status
+curl -X POST -H "x-api-key: $KEY" -H 'Content-Type: application/json' -d '{}' \
+  http://127.0.0.1:3000/integrations/shopee-bridge/sync
+curl -H "x-api-key: $KEY" http://127.0.0.1:3000/integrations/shopee-bridge/screenshot -o area.png
+```
+
 ## Notes
 
-- `.env` is gitignored and supplies local VAPID keys; production requires `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`.
+- `.env` is gitignored and supplies local VAPID keys plus `SHOPEE_BRIDGE_URL=http://127.0.0.1:4020`; production requires `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`.
 - Docker CI generates ephemeral VAPID keys; do not commit real keys.
 - Private use only for Project ID `1388246780`.
-- LAN access: `http://10.49.67.189:3000` (same network only); the boot hook lives outside the repo and requires the Termux:Boot app to be opened once.
+- LAN access uses a dynamic address (`10.38.25.243` at this check); the FOD boot hook lives outside the repo and requires the Termux:Boot app to be opened once.
 - The supervisor holds a wake lock installed by the boot hook; reboot behavior could not be tested without restarting the device.
 - Android may kill the supervisor under memory pressure (observed once while running Chromium E2E, alongside PostgreSQL/Redis). Re-run `npm run supervisor` to recover; it is idempotent.
-- Redis persistence now lives in `$PREFIX/tmp/opencode/fod-redis.rdb`, not the repo.
+- Redis persistence lives in `$PREFIX/tmp/opencode/fod-redis.rdb`, not the repo.
+- The Shopee integration is intentionally read-only; do not add raw tap/accept proxy routes without a reviewed order-match and confirmation flow.
