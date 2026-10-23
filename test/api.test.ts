@@ -132,7 +132,15 @@ test('serves PWA manifest, service worker, and icons', async () => {
   const sw = await fetch(`${baseUrl}/sw.js`);
   expect(sw.status).toBe(200);
   expect(sw.headers.get('content-type')).toContain('javascript');
-  expect(await sw.text()).toContain('fod-v4');
+  expect(await sw.text()).toContain('fod-v5');
+
+  const admin = await fetch(`${baseUrl}/admin.html`);
+  expect(admin.status).toBe(200);
+  const adminHtml = await admin.text();
+  expect(adminHtml).toContain('ออเดอร์และการแจ้งเตือนล่าสุด');
+  expect(adminHtml).toContain('id="bridgeActivity"');
+  expect(adminHtml).not.toContain('id="bridgeOrders"');
+  expect(adminHtml).not.toContain('id="bridgeEvents"');
 
   for (const icon of [
     '/favicon.svg',
