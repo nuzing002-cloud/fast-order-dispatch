@@ -30,6 +30,7 @@ import {
   Payout,
   SystemMetrics
 } from '../types/order';
+import { KpiRange, KpiReport } from '../types/kpi';
 import { DistanceCalculator } from '../utils/DistanceCalculator';
 
 export const DISPATCH_DRIVER_ID = '1388246780';
@@ -613,6 +614,10 @@ export class BatchProcessingService extends EventEmitter {
 
   async getMetrics(): Promise<SystemMetrics> {
     return this.store.getMetrics();
+  }
+
+  async getKpiReport(range: KpiRange): Promise<KpiReport> {
+    return this.store.getKpiReport(range);
   }
 
   getQueueSize(): Promise<number> {

@@ -6,6 +6,10 @@
   const driversBody = document.getElementById('driversBody');
   const batchesBody = document.getElementById('batchesBody');
   const metricsBox = document.getElementById('metrics');
+  const kpiMetrics = document.getElementById('kpiMetrics');
+  const kpiRangeLabel = document.getElementById('kpiRangeLabel');
+  const kpiPerDay = document.getElementById('kpiPerDay');
+  const kpiPerDriver = document.getElementById('kpiPerDriver');
   const auditBox = document.getElementById('auditList');
   const dispatchInfo = document.getElementById('dispatchInfo');
   const payoutSelect = document.getElementById('payoutDriver');
@@ -22,6 +26,7 @@
   const bridgeShotMeta = document.getElementById('bridgeShotMeta');
   let bridgeShotUrl = null;
   let lastBridgeShotAt = null;
+  let selectedKpiDays = 7;
 
   let dispatchDriverIds = ['1388246780'];
 
@@ -309,6 +314,86 @@
     }
   }
 
+  function bangkokDateKey(date) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  async function loadKpi(days = selectedKpiDays) {
+    selectedKpiDays = days;
+    const now = new Date();
+    const currentDay = new Date(`${bangkokDateKey(now)}T00:00:00.000Z`);
+    currentDay.setUTCDate(currentDay.getUTCDate() - days + 1);
+    const from = new Date(`${currentDay.toISOString().slice(0, 10)}T00:00:00+07:00`);
+    const query = new URLSearchParams({ from: from.toISOString(), to: now.toISOString() });
+    try {
+      const report = await F.request(`/metrics/kpi?${query}`);
+      const totals = report.totals;
+      const percent = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
+      const duration = (value) => `${Math.round(Number(value || 0) / 1000)} วินาที`;
+      kpiRangeLabel.textContent = `${new Intl.DateTimeFormat('th-TH', {
+        timeZone: 'Asia/Bangkok',
+        dateStyle: 'medium'
+      }).format(from)} – ${new Intl.DateTimeFormat('th-TH', {
+        timeZone: 'Asia/Bangkok',
+        dateStyle: 'medium'
+      }).format(now)}`;
+      kpiMetrics.innerHTML = [
+        metricCard('สร้างออเดอร์', totals.ordersCreated, 'ตามวันสร้าง'),
+        metricCard('ส่งสำเร็จ', totals.delivered, 'ออเดอร์ที่จัดส่งแล้ว'),
+        metricCard('กำลังดำเนินการ', totals.inProgress, 'ยังไม่จบงาน'),
+        metricCard('ยกเลิก', totals.cancelled, 'ออเดอร์ที่ยกเลิก'),
+        metricCard('ล้มเหลว', totals.failed, 'ออเดอร์ที่ล้มเหลว'),
+        metricCard('อัตราสำเร็จ', percent(totals.successRate), 'ส่งสำเร็จ / งานที่จบ'),
+        metricCard('ส่งตรงเวลา', percent(totals.onTimeRate), 'เฉพาะงานที่มีเวลา ETA'),
+        metricCard('รอคิวเฉลี่ย', duration(totals.avgQueueWaitMs), 'เข้าคิว → จ่ายงาน'),
+        metricCard('รอรับอาหารเฉลี่ย', duration(totals.avgPickupMs), 'จ่ายงาน → รับอาหาร'),
+        metricCard('เวลาส่งเฉลี่ย', duration(totals.avgDeliveryMs), 'รับอาหาร → ส่งสำเร็จ'),
+        metricCard('รายได้', F.money(totals.revenue), 'ส่งสำเร็จ ไม่รวมคืนเงิน'),
+        metricCard('ค่าส่งรวม', F.money(totals.deliveryFees), 'ออเดอร์ที่ส่งสำเร็จ'),
+        metricCard('ยอดเฉลี่ยต่อออเดอร์', F.money(totals.avgOrderValue), 'เฉพาะรายได้ที่ไม่คืนเงิน')
+      ].join('');
+      kpiPerDay.innerHTML = report.perDay.length
+        ? report.perDay
+            .map(
+              (day) => `
+                <tr>
+                  <td>${F.escapeHtml(day.date)}</td>
+                  <td>${F.escapeHtml(day.ordersCreated)}</td>
+                  <td>${F.escapeHtml(day.delivered)}</td>
+                  <td>${F.money(day.revenue)}</td>
+                </tr>`
+            )
+            .join('')
+        : '<tr><td colspan="4" class="empty">ไม่มีข้อมูลในช่วงนี้</td></tr>';
+      kpiPerDriver.innerHTML = report.perDriver.length
+        ? report.perDriver
+            .map(
+              (driver) => `
+                <tr>
+                  <td class="mono">${F.escapeHtml(driver.driverId)}</td>
+                  <td>${F.escapeHtml(driver.delivered)}</td>
+                  <td>${duration(driver.avgDeliveryMs)}</td>
+                  <td>${F.money(driver.deliveryFees)}</td>
+                  <td>${F.money(driver.earnings)}</td>
+                </tr>`
+            )
+            .join('')
+        : '<tr><td colspan="5" class="empty">ไม่มีข้อมูลในช่วงนี้</td></tr>';
+    } catch (error) {
+      kpiRangeLabel.textContent = 'รายงาน KPI';
+      kpiMetrics.innerHTML = `<div class="card"><p class="empty">โหลดรายงานไม่สำเร็จ: ${F.escapeHtml(error.message)}</p></div>`;
+      kpiPerDay.innerHTML = '<tr><td colspan="4" class="empty">โหลดรายงานไม่สำเร็จ</td></tr>';
+      kpiPerDriver.innerHTML = '<tr><td colspan="5" class="empty">โหลดรายงานไม่สำเร็จ</td></tr>';
+    }
+  }
+
   function orderActions(order) {
     const buttons = F.nextStatuses(order.status)
       .map(
@@ -499,6 +584,7 @@
   function loadAll() {
     loadHealth();
     loadMetrics();
+    loadKpi();
     loadOrders();
     loadDrivers();
     loadPayouts();
@@ -508,6 +594,17 @@
   }
 
   document.getElementById('refreshButton').addEventListener('click', loadAll);
+  document.querySelectorAll('[data-kpi-days]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const days = Number(button.dataset.kpiDays);
+      if (![1, 7, 30].includes(days)) return;
+      selectedKpiDays = days;
+      document.querySelectorAll('[data-kpi-days]').forEach((rangeButton) => {
+        rangeButton.classList.toggle('btn-primary', rangeButton === button);
+      });
+      loadKpi(days);
+    });
+  });
   document.getElementById('bridgeSyncButton').addEventListener('click', async (event) => {
     const button = event.currentTarget;
     button.disabled = true;

@@ -45,6 +45,55 @@
 
       <section class="grid grid-4" id="metrics"></section>
 
+      <section class="section card" id="kpiReport">
+        <div class="section-head">
+          <div>
+            <h2>รายงาน KPI</h2>
+            <p class="muted small" id="kpiRangeLabel">กำลังโหลด...</p>
+          </div>
+          <div class="row" role="group" aria-label="ช่วงเวลารายงาน KPI">
+            <button class="btn-small" data-kpi-days="1">วันนี้</button>
+            <button class="btn-small btn-primary" data-kpi-days="7">7 วัน</button>
+            <button class="btn-small" data-kpi-days="30">30 วัน</button>
+          </div>
+        </div>
+        <div class="grid grid-4" id="kpiMetrics">
+          <p class="muted small">กำลังโหลดรายงาน...</p>
+        </div>
+        <div class="split" style="margin-top: 16px">
+          <section>
+            <div class="section-head">
+              <h3 style="margin: 0">รายวัน</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>วันที่</th><th>สร้าง</th><th>ส่งสำเร็จ</th><th>รายได้</th></tr>
+                </thead>
+                <tbody id="kpiPerDay">
+                  <tr><td colspan="4" class="empty">กำลังโหลด...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <div class="section-head">
+              <h3 style="margin: 0">รายคนขับ</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>คนขับ</th><th>ส่งสำเร็จ</th><th>เวลาส่งเฉลี่ย</th><th>ค่าส่ง</th><th>รายได้คนขับ</th></tr>
+                </thead>
+                <tbody id="kpiPerDriver">
+                  <tr><td colspan="5" class="empty">กำลังโหลด...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section class="card section" style="margin-top: 16px">
         <div class="row" style="justify-content: space-between">
           <div>

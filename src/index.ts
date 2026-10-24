@@ -61,6 +61,7 @@ import {
   PaymentTransaction,
   Restaurant
 } from './types/order';
+import { bangkokDateKey, KpiRange } from './types/kpi';
 
 const config = loadConfig();
 
@@ -288,6 +289,56 @@ function parsePagination(query: Request['query']): { limit: number; offset: numb
     throw new ValidationError('offset must be a non-negative integer');
   }
   return { limit, offset };
+}
+
+function parseKpiDate(value: unknown, field: string): Date {
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value
+    )
+  ) {
+    throw new ValidationError(`${field} must be an ISO 8601 date-time`);
+  }
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  const calendarDate = new Date(Date.UTC(year!, month! - 1, day!));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month! - 1 ||
+    calendarDate.getUTCDate() !== day
+  ) {
+    throw new ValidationError(`${field} must be a valid ISO 8601 date-time`);
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new ValidationError(`${field} must be a valid ISO 8601 date-time`);
+  }
+  return date;
+}
+
+function parseKpiRange(query: Request['query']): KpiRange {
+  const fromValue = query.from;
+  const toValue = query.to;
+  if (fromValue === undefined && toValue === undefined) {
+    const today = bangkokDateKey(new Date());
+    const firstDay = new Date(`${today}T00:00:00.000Z`);
+    firstDay.setUTCDate(firstDay.getUTCDate() - 6);
+    const from = new Date(`${firstDay.toISOString().slice(0, 10)}T00:00:00+07:00`);
+    return { from, to: new Date() };
+  }
+  if (fromValue === undefined || toValue === undefined) {
+    throw new ValidationError('from and to must be provided together');
+  }
+
+  const from = parseKpiDate(fromValue, 'from');
+  const to = parseKpiDate(toValue, 'to');
+  if (from.getTime() > to.getTime()) {
+    throw new ValidationError('from must be before or equal to to');
+  }
+  if (to.getTime() - from.getTime() > 90 * 24 * 60 * 60 * 1000) {
+    throw new ValidationError('date range must not exceed 90 days');
+  }
+  return { from, to };
 }
 
 const swaggerUiPath = path.dirname(require.resolve('swagger-ui-dist'));
@@ -938,6 +989,14 @@ export function createDispatchApp(options: DispatchAppOptions = {}): Express {
         limit,
         offset
       });
+    })
+  );
+
+  app.get(
+    '/metrics/kpi',
+    requireRole('admin'),
+    asyncHandler(async (request, response) => {
+      response.json(await service.getKpiReport(parseKpiRange(request.query)));
     })
   );
 

@@ -409,6 +409,119 @@ export const openApiSpec = {
         responses: { '200': { description: 'Metrics snapshot' } }
       }
     },
+    '/metrics/kpi': {
+      get: {
+        summary: 'KPI report for an order creation date range (admin only)',
+        description:
+          'Reports orders created within the inclusive range. Defaults to the current and previous six calendar days in Asia/Bangkok. Maximum range is 90 days.',
+        parameters: [
+          {
+            name: 'from',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', format: 'date-time' }
+          },
+          {
+            name: 'to',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', format: 'date-time' }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'KPI totals, daily breakdown, and driver breakdown',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['range', 'totals', 'perDay', 'perDriver'],
+                  properties: {
+                    range: {
+                      type: 'object',
+                      required: ['from', 'to'],
+                      properties: {
+                        from: { type: 'string', format: 'date-time' },
+                        to: { type: 'string', format: 'date-time' }
+                      }
+                    },
+                    totals: {
+                      type: 'object',
+                      required: [
+                        'ordersCreated',
+                        'delivered',
+                        'cancelled',
+                        'failed',
+                        'inProgress',
+                        'successRate',
+                        'onTimeRate',
+                        'avgQueueWaitMs',
+                        'avgPickupMs',
+                        'avgDeliveryMs',
+                        'revenue',
+                        'deliveryFees',
+                        'avgOrderValue'
+                      ],
+                      properties: {
+                        ordersCreated: { type: 'integer' },
+                        delivered: { type: 'integer' },
+                        cancelled: { type: 'integer' },
+                        failed: { type: 'integer' },
+                        inProgress: { type: 'integer' },
+                        successRate: { type: 'number' },
+                        onTimeRate: { type: 'number' },
+                        avgQueueWaitMs: { type: 'number' },
+                        avgPickupMs: { type: 'number' },
+                        avgDeliveryMs: { type: 'number' },
+                        revenue: { type: 'number' },
+                        deliveryFees: { type: 'number' },
+                        avgOrderValue: { type: 'number' }
+                      }
+                    },
+                    perDay: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['date', 'ordersCreated', 'delivered', 'revenue'],
+                        properties: {
+                          date: { type: 'string', format: 'date' },
+                          ordersCreated: { type: 'integer' },
+                          delivered: { type: 'integer' },
+                          revenue: { type: 'number' }
+                        }
+                      }
+                    },
+                    perDriver: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: [
+                          'driverId',
+                          'delivered',
+                          'avgDeliveryMs',
+                          'deliveryFees',
+                          'earnings'
+                        ],
+                        properties: {
+                          driverId: { type: 'string' },
+                          delivered: { type: 'integer' },
+                          avgDeliveryMs: { type: 'number' },
+                          deliveryFees: { type: 'number' },
+                          earnings: { type: 'number' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '400': { description: 'Invalid date range; maximum 90 days' },
+          '401': { description: 'API key required' },
+          '403': { description: 'Admin role required' }
+        }
+      }
+    },
     '/metrics/prometheus': {
       get: {
         summary: 'Dispatch and process metrics in Prometheus text format',

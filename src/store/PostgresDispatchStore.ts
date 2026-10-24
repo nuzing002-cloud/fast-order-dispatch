@@ -23,6 +23,7 @@ import type {
 import { applyMigrations } from './schema';
 import { parseJson, stringifyJson } from './serialize';
 import { SqlDatabase, SqlExecutor } from './sql';
+import { bangkokDateKeys, KpiRange, KpiReport } from '../types/kpi';
 
 function orderValues(order: Order): unknown[] {
   return [
@@ -359,6 +360,146 @@ export class PostgresDispatchStore implements DispatchStore {
       activeDrivers: Number(row.active_drivers ?? 0),
       pendingOrders: Number(row.pending_orders ?? 0),
       timestamp: new Date()
+    };
+  }
+
+  async getKpiReport(range: KpiRange): Promise<KpiReport> {
+    const scoped = `
+      WITH scoped AS (
+        SELECT
+          id,
+          status,
+          payment_status,
+          created_at,
+          queued_at,
+          assigned_at,
+          delivered_at,
+          total_amount,
+          NULLIF(data->>'assignedDriverId', '') AS driver_id,
+          NULLIF(data->>'pickedUpAt', '')::timestamptz AS picked_up_at,
+          NULLIF(data->>'estimatedDeliveryTime', '')::timestamptz AS estimated_delivery_at,
+          (data->>'deliveryFee')::numeric AS delivery_fee
+        FROM orders
+        WHERE created_at >= $1 AND created_at <= $2
+      )
+    `;
+    const [summaryRows, dayRows, driverRows] = await Promise.all([
+      this.database.query<Record<string, unknown>>(
+        `${scoped}
+         SELECT
+           count(*)::int AS orders_created,
+           count(*) FILTER (WHERE status = 'DELIVERED')::int AS delivered,
+           count(*) FILTER (WHERE status = 'CANCELLED')::int AS cancelled,
+           count(*) FILTER (WHERE status = 'FAILED')::int AS failed,
+           count(*) FILTER (WHERE status NOT IN ('DELIVERED', 'CANCELLED', 'FAILED'))::int AS in_progress,
+           COALESCE(
+             count(*) FILTER (WHERE status = 'DELIVERED')::numeric
+             / NULLIF(count(*) FILTER (WHERE status IN ('DELIVERED', 'CANCELLED', 'FAILED')), 0),
+             0
+           ) AS success_rate,
+           COALESCE(
+             count(*) FILTER (
+               WHERE status = 'DELIVERED'
+                 AND delivered_at IS NOT NULL
+                 AND estimated_delivery_at IS NOT NULL
+                 AND delivered_at <= estimated_delivery_at
+             )::numeric
+             / NULLIF(count(*) FILTER (
+               WHERE status = 'DELIVERED'
+                 AND delivered_at IS NOT NULL
+                 AND estimated_delivery_at IS NOT NULL
+             ), 0),
+             0
+           ) AS on_time_rate,
+           COALESCE(avg(EXTRACT(EPOCH FROM (assigned_at - queued_at)) * 1000)
+             FILTER (WHERE queued_at IS NOT NULL AND assigned_at >= queued_at), 0) AS avg_queue_wait_ms,
+           COALESCE(avg(EXTRACT(EPOCH FROM (picked_up_at - assigned_at)) * 1000)
+             FILTER (WHERE picked_up_at IS NOT NULL AND picked_up_at >= assigned_at), 0) AS avg_pickup_ms,
+           COALESCE(avg(EXTRACT(EPOCH FROM (delivered_at - picked_up_at)) * 1000)
+             FILTER (WHERE delivered_at IS NOT NULL AND delivered_at >= picked_up_at), 0) AS avg_delivery_ms,
+           COALESCE(sum(total_amount) FILTER (
+             WHERE status = 'DELIVERED' AND payment_status <> 'REFUNDED'
+           ), 0) AS revenue,
+           COALESCE(sum(delivery_fee) FILTER (WHERE status = 'DELIVERED'), 0) AS delivery_fees,
+           COALESCE(avg(total_amount) FILTER (
+             WHERE status = 'DELIVERED' AND payment_status <> 'REFUNDED'
+           ), 0) AS avg_order_value
+         FROM scoped`,
+        [range.from, range.to]
+      ),
+      this.database.query<Record<string, unknown>>(
+        `${scoped}
+         SELECT
+           to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS date,
+           count(*)::int AS orders_created,
+           count(*) FILTER (WHERE status = 'DELIVERED')::int AS delivered,
+           COALESCE(sum(total_amount) FILTER (
+             WHERE status = 'DELIVERED' AND payment_status <> 'REFUNDED'
+           ), 0) AS revenue
+         FROM scoped
+         GROUP BY date
+         ORDER BY date ASC`,
+        [range.from, range.to]
+      ),
+      this.database.query<Record<string, unknown>>(
+        `${scoped}
+         SELECT
+           scoped.driver_id,
+           count(*)::int AS delivered,
+           COALESCE(avg(EXTRACT(EPOCH FROM (scoped.delivered_at - scoped.picked_up_at)) * 1000)
+             FILTER (WHERE scoped.delivered_at IS NOT NULL AND scoped.delivered_at >= scoped.picked_up_at), 0)
+             AS avg_delivery_ms,
+           COALESCE(sum(scoped.delivery_fee), 0) AS delivery_fees,
+           COALESCE(sum(earnings.amount), 0) AS earnings
+         FROM scoped
+         LEFT JOIN driver_earnings AS earnings ON earnings.order_id = scoped.id
+         WHERE scoped.status = 'DELIVERED' AND scoped.driver_id IS NOT NULL
+         GROUP BY scoped.driver_id
+         ORDER BY scoped.driver_id ASC`,
+        [range.from, range.to]
+      )
+    ]);
+    const summary = summaryRows[0] ?? {};
+    const perDayByDate = new Map(
+      dayRows.map((row) => [
+        String(row.date),
+        {
+          date: String(row.date),
+          ordersCreated: Number(row.orders_created ?? 0),
+          delivered: Number(row.delivered ?? 0),
+          revenue: Number(row.revenue ?? 0)
+        }
+      ])
+    );
+
+    return {
+      range: { from: range.from.toISOString(), to: range.to.toISOString() },
+      totals: {
+        ordersCreated: Number(summary.orders_created ?? 0),
+        delivered: Number(summary.delivered ?? 0),
+        cancelled: Number(summary.cancelled ?? 0),
+        failed: Number(summary.failed ?? 0),
+        inProgress: Number(summary.in_progress ?? 0),
+        successRate: Number(summary.success_rate ?? 0),
+        onTimeRate: Number(summary.on_time_rate ?? 0),
+        avgQueueWaitMs: Number(summary.avg_queue_wait_ms ?? 0),
+        avgPickupMs: Number(summary.avg_pickup_ms ?? 0),
+        avgDeliveryMs: Number(summary.avg_delivery_ms ?? 0),
+        revenue: Number(summary.revenue ?? 0),
+        deliveryFees: Number(summary.delivery_fees ?? 0),
+        avgOrderValue: Number(summary.avg_order_value ?? 0)
+      },
+      perDay: bangkokDateKeys(range.from, range.to).map(
+        (date) =>
+          perDayByDate.get(date) ?? { date, ordersCreated: 0, delivered: 0, revenue: 0 }
+      ),
+      perDriver: driverRows.map((row) => ({
+        driverId: String(row.driver_id),
+        delivered: Number(row.delivered ?? 0),
+        avgDeliveryMs: Number(row.avg_delivery_ms ?? 0),
+        deliveryFees: Number(row.delivery_fees ?? 0),
+        earnings: Number(row.earnings ?? 0)
+      }))
     };
   }
 

@@ -4,7 +4,13 @@ import { join } from 'path';
 import { BatchProcessingService } from '../src/services/BatchProcessingService';
 import { PostgresDispatchStore } from '../src/store/PostgresDispatchStore';
 import { PgliteSqlDatabase } from '../src/store/pglite';
-import { DriverStatus, OrderStatus, PaymentStatus, PaymentTransaction } from '../src/types/order';
+import {
+  DriverEarning,
+  DriverStatus,
+  OrderStatus,
+  PaymentStatus,
+  PaymentTransaction
+} from '../src/types/order';
 import { makeDriver, makeOrder } from './helpers';
 
 jest.setTimeout(120_000);
@@ -281,5 +287,86 @@ describe('PostgreSQL dispatch store', () => {
       await database.close();
     }
   });
-});
 
+  test('aggregates KPI reports in SQL with Bangkok daily buckets', async () => {
+    const { database, store } = await createStore();
+    try {
+      const delivered = {
+        ...makeOrder('kpi-delivered', 13.76, 100.51, 100),
+        status: OrderStatus.DELIVERED,
+        paymentStatus: PaymentStatus.COMPLETED,
+        createdAt: new Date('2025-01-01T03:00:00.000Z'),
+        queuedAt: new Date('2025-01-01T03:10:00.000Z'),
+        assignedAt: new Date('2025-01-01T03:20:00.000Z'),
+        pickedUpAt: new Date('2025-01-01T04:00:00.000Z'),
+        deliveredAt: new Date('2025-01-01T05:00:00.000Z'),
+        estimatedDeliveryTime: new Date('2025-01-01T05:30:00.000Z'),
+        assignedDriverId: 'driver-sql'
+      };
+      const refunded = {
+        ...makeOrder('kpi-refunded', 13.76, 100.51, 200),
+        status: OrderStatus.DELIVERED,
+        paymentStatus: PaymentStatus.REFUNDED,
+        createdAt: new Date('2025-01-02T03:00:00.000Z'),
+        deliveredAt: new Date('2025-01-02T05:00:00.000Z'),
+        assignedDriverId: 'driver-sql',
+        deliveryFee: 35
+      };
+      const cancelled = {
+        ...makeOrder('kpi-cancelled'),
+        status: OrderStatus.CANCELLED,
+        createdAt: new Date('2025-01-02T04:00:00.000Z')
+      };
+      const earning: DriverEarning = {
+        id: 'kpi-earning',
+        driverId: 'driver-sql',
+        orderId: delivered.id,
+        amount: 22.4,
+        currency: 'THB',
+        status: 'PENDING',
+        createdAt: delivered.deliveredAt
+      };
+      await store.transaction(async (tx) => {
+        await tx.insertOrder(delivered);
+        await tx.insertOrder(refunded);
+        await tx.insertOrder(cancelled);
+        await tx.insertEarning(earning);
+      });
+
+      const report = await store.getKpiReport({
+        from: new Date('2025-01-01T00:00:00.000Z'),
+        to: new Date('2025-01-02T16:59:59.999Z')
+      });
+      expect(report.totals).toEqual({
+        ordersCreated: 3,
+        delivered: 2,
+        cancelled: 1,
+        failed: 0,
+        inProgress: 0,
+        successRate: 2 / 3,
+        onTimeRate: 1,
+        avgQueueWaitMs: 600_000,
+        avgPickupMs: 2_400_000,
+        avgDeliveryMs: 3_600_000,
+        revenue: 100,
+        deliveryFees: 63,
+        avgOrderValue: 100
+      });
+      expect(report.perDay).toEqual([
+        { date: '2025-01-01', ordersCreated: 1, delivered: 1, revenue: 100 },
+        { date: '2025-01-02', ordersCreated: 2, delivered: 1, revenue: 0 }
+      ]);
+      expect(report.perDriver).toEqual([
+        {
+          driverId: 'driver-sql',
+          delivered: 2,
+          avgDeliveryMs: 3_600_000,
+          deliveryFees: 63,
+          earnings: 22.4
+        }
+      ]);
+    } finally {
+      await database.close();
+    }
+  });
+});

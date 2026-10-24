@@ -25,6 +25,7 @@ import {
   clonePayout,
   clonePushSubscription
 } from './clone';
+import { bangkokDateKeys, bangkokDateKey, KpiRange, KpiReport } from '../types/kpi';
 
 export type StorageKind = 'memory' | 'postgres' | 'pglite';
 
@@ -91,6 +92,7 @@ export interface DispatchStore extends IdempotencyStore {
     offset: number
   ): Promise<{ entries: AuditLogEntry[]; total: number }>;
   getMetrics(): Promise<SystemMetrics>;
+  getKpiReport(range: KpiRange): Promise<KpiReport>;
 
   getEarningByOrder(orderId: string): Promise<DriverEarning | undefined>;
   getEarningsForDriver(driverId: string): Promise<DriverEarning[]>;
@@ -300,6 +302,119 @@ export class MemoryDispatchStore implements DispatchStore {
       ).length,
       pendingOrders: this.queuedOrders().length,
       timestamp: new Date()
+    };
+  }
+
+  async getKpiReport(range: KpiRange): Promise<KpiReport> {
+    await this.tail;
+    const orders = [...this.orders.values()].filter(
+      (order) =>
+        order.createdAt.getTime() >= range.from.getTime() &&
+        order.createdAt.getTime() <= range.to.getTime()
+    );
+    const delivered = orders.filter((order) => order.status === OrderStatus.DELIVERED);
+    const revenueOrders = delivered.filter(
+      (order) => order.paymentStatus !== PaymentStatus.REFUNDED
+    );
+    const terminalCount = orders.filter((order) =>
+      [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.FAILED].includes(order.status)
+    ).length;
+    const onTimeOrders = delivered.filter(
+      (order) => order.deliveredAt !== undefined && order.estimatedDeliveryTime !== undefined
+    );
+    const average = (values: number[]): number =>
+      values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+    const duration = (start: Date | undefined, end: Date | undefined): number | undefined => {
+      if (!start || !end || end.getTime() < start.getTime()) return undefined;
+      return end.getTime() - start.getTime();
+    };
+    const revenue = revenueOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+    const perDay = new Map(
+      bangkokDateKeys(range.from, range.to).map((date) => [
+        date,
+        { date, ordersCreated: 0, delivered: 0, revenue: 0 }
+      ])
+    );
+    const driverRows = new Map<
+      string,
+      { durations: number[]; delivered: number; deliveryFees: number; earnings: number }
+    >();
+
+    for (const order of orders) {
+      const day = perDay.get(bangkokDateKey(order.createdAt));
+      if (day) {
+        day.ordersCreated += 1;
+        if (order.status === OrderStatus.DELIVERED) {
+          day.delivered += 1;
+          if (order.paymentStatus !== PaymentStatus.REFUNDED) {
+            day.revenue += order.totalAmount;
+          }
+        }
+      }
+
+      if (order.status !== OrderStatus.DELIVERED || !order.assignedDriverId) continue;
+      const row = driverRows.get(order.assignedDriverId) ?? {
+        durations: [],
+        delivered: 0,
+        deliveryFees: 0,
+        earnings: 0
+      };
+      row.delivered += 1;
+      row.deliveryFees += order.deliveryFee;
+      const deliveryMs = duration(order.pickedUpAt, order.deliveredAt);
+      if (deliveryMs !== undefined) row.durations.push(deliveryMs);
+      row.earnings += this.earnings.get(order.id)?.amount ?? 0;
+      driverRows.set(order.assignedDriverId, row);
+    }
+
+    const avgQueueWaitMs = average(
+      orders
+        .map((order) => duration(order.queuedAt, order.assignedAt))
+        .filter((value): value is number => value !== undefined)
+    );
+    const avgPickupMs = average(
+      orders
+        .map((order) => duration(order.assignedAt, order.pickedUpAt))
+        .filter((value): value is number => value !== undefined)
+    );
+    const avgDeliveryMs = average(
+      delivered
+        .map((order) => duration(order.pickedUpAt, order.deliveredAt))
+        .filter((value): value is number => value !== undefined)
+    );
+
+    return {
+      range: { from: range.from.toISOString(), to: range.to.toISOString() },
+      totals: {
+        ordersCreated: orders.length,
+        delivered: delivered.length,
+        cancelled: orders.filter((order) => order.status === OrderStatus.CANCELLED).length,
+        failed: orders.filter((order) => order.status === OrderStatus.FAILED).length,
+        inProgress: orders.length - terminalCount,
+        successRate: terminalCount === 0 ? 0 : delivered.length / terminalCount,
+        onTimeRate:
+          onTimeOrders.length === 0
+            ? 0
+            : onTimeOrders.filter(
+                (order) => order.deliveredAt!.getTime() <= order.estimatedDeliveryTime!.getTime()
+              ).length / onTimeOrders.length,
+        avgQueueWaitMs,
+        avgPickupMs,
+        avgDeliveryMs,
+        revenue,
+        deliveryFees: delivered.reduce((sum, order) => sum + order.deliveryFee, 0),
+        avgOrderValue: revenueOrders.length === 0 ? 0 : revenue / revenueOrders.length
+      },
+      perDay: [...perDay.values()],
+      perDriver: [...driverRows.entries()]
+        .map(([driverId, row]) => ({
+          driverId,
+          delivered: row.delivered,
+          avgDeliveryMs: average(row.durations),
+          deliveryFees: row.deliveryFees,
+          earnings: row.earnings
+        }))
+        .sort((left, right) => left.driverId.localeCompare(right.driverId))
     };
   }
 
