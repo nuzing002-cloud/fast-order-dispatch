@@ -2,16 +2,17 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-28 17:37 (Asia/Bangkok)
+Updated: 2026-10-28 18:05 (Asia/Bangkok)
 
 ## Current state
 
-- Branch: `main`; latest code commit `c4c0808` (KPI queue-wait fix, regression test, docs); a docs-only follow-up may add a newer commit
-- CI: run `40673506936` green on `c4c0808`; earlier green runs are `40662630710` (`75df64d`) and `40666331472` (`ba7787f`)
+- Branch: `main`; latest code commit `c4c0808` (KPI queue-wait fix, regression test); docs updates are committed separately
+- CI: run `40673704362` green on `9c807f4`; run `40673506936` green on `c4c0808`; earlier green runs are `40662630710` (`75df64d`) and `40666331472` (`ba7787f`)
 - Local server: `http://127.0.0.1:3000` from rebuilt `dist/` (PostgreSQL), PID 19515; `/health` 200 (`queueSize=0`); KPI live `avgQueueWaitMs=58ms` (was structurally 0)
 - Supervisor: detached `scripts/local-supervisor.sh`, PID 22368; PostgreSQL PID 22386 and Redis PID 22402
 - ADB: `127.0.0.1:5555` connected (`CPH2237`; `adb shell` OK); `service.adb.tcp.port=5555`; bridge reports `adb.ok=true`; non-root `persist.adb.tcp.port` is denied
-- Shopee bridge: `http://127.0.0.1:4020` 200; supervisor/app PIDs 25522/15634; 27 offer records (23 failed, 2 accepted, 2 missed), 1 active notification, 1s poll; auto-open/auto-accept enabled; local supervisor watchdog reconnects ADB every 10s when lost
+- Shopee bridge: `http://127.0.0.1:4020` 200; supervisor/app PIDs 22253/22263 at 18:07; 27 offer records (23 failed, 2 accepted, 2 missed), 0 active offers, 1s poll; auto-open/auto-accept enabled; heartbeat and ADB watchdog running
+- One-tap/fallback: bridge sends Termux notification at 15s/40s with a “สไลด์รับงาน” action; `/action/accept-offer` now has an accept lock and aborts if the notification is not uniquely found; startup resumes pending-offer alerts; supervisor alerts on ADB loss/recovery/restart
 - Missed offer: latest offer at 2026-10-28 16:45:31 local reused the failed key `0|...|0|null|10371`; it was dismissed at 16:54 with no auto-accept attempt; local `server.js` now treats a changed notification `when` as a fresh offer and resets attempt state
 - Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` and bridge hook installed but still not verified by a real reboot
 - LAN URL: `http://10.40.184.249:3000` (current; `10.38.25.243` no longer responds; dynamic address)
@@ -27,7 +28,8 @@ Updated: 2026-10-28 17:37 (Asia/Bangkok)
 - PostgreSQL persistence, auth roles/API keys, idempotency, audit log, rate limiting, payments/refunds, driver earnings/payouts, decline/pause, web push, Prometheus metrics, PWA UI
 - Minimum delivery fee 28 THB (`MIN_DELIVERY_FEE`), enforced in API and UI
 - Shopee Food Driver navigation handoff: `/shopee-driver.html` plus `/integrations/shopee-driver/links` and `/integrations/shopee-driver/deep-link` (navigation-only, no private API or order sync)
-- Read-only Shopee bridge integration: `/integrations/shopee-bridge/{status,sync,screenshot}` and `/webhooks/shopee-bridge`; typed client/service, HMAC or loopback-only webhook, event dedupe, screenshot validation, admin panel, no open/accept proxy routes
+- Read-only Shopee bridge integration in FOD: `/integrations/shopee-bridge/{status,sync,screenshot}` and `/webhooks/shopee-bridge`; typed client/service, HMAC or loopback-only webhook, event dedupe, screenshot validation, admin panel; FOD does not proxy open/accept actions
+- Local bridge one-tap fallback: 15s/40s offer reminders, Termux notification action calls `accept-now.sh <orderId>`, `/action/accept-offer` checks the offer and accept lock, and startup reschedules/re-alerts pending offers
 - Unified Shopee activity feed: order notifications and regular notifications appear together in time order; linked orders are enriched with order details and rendered once
 - Bridge console uses the same combined chronological feed; only explicit new-offer notifications can trigger its auto-accept path, and startup does not replay old notifications
 - Web console API-key bootstrap (`?api_key=`/`#api_key=`) with validation and URL cleanup
@@ -39,13 +41,19 @@ Updated: 2026-10-28 17:37 (Asia/Bangkok)
 
 ## Verification (last run)
 
+- 2026-10-28 18:07-18:09 bridge one-tap/fallback hardening:
+- `node --check server.js`, `bash -n supervisor.sh`, `bash -n accept-now.sh` PASS
+- Bridge restarted: supervisor PID 22253, app PID 22263; `/health` 200, `adb.ok=true`, `pendingOffers=0`, `acceptBusy=false`, `lastHeartbeatAt` current
+- Synthetic restart test in a temp `DATA_DIR`: a 20s-old pending offer resumed at startup, `pendingOffers=1`, `lastFallbackAt` set, and fake `termux-notification` received the offer title plus `accept-now.sh 'test-key'` action
+- `./accept-now.sh test-no-such-offer` returned `{"ok":false,"error":"offer not found"}` and produced result notification `bridge-accept-result`; test notification removed
+- No live offer was available to test the real notification action or swipe; live end-to-end remains unverified
 - 2026-10-28 17:28-17:37 verification after the KPI queue-wait and bridge offer-key fixes:
 - `npm run lint` PASS; `npm run typecheck` PASS; `npm run build` PASS; server rebuilt and restarted (PID 19515)
 - `npm test -- --runInBand` PASS: 138 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` PASS: order `order_0fa07dc8-04a3-4fe2-ae09-8792fd4a1636`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`, PWA assets OK
 - KPI live: admin `GET /metrics/kpi?days=1` 200; `avgQueueWaitMs=58` (non-zero), 25 delivered, 3,182 THB revenue, 682 THB fees
 - Bridge offer-key fix verified by loading the real `upsertOrder` source with a seeded failed record: new `when` -> `status=new`, `acceptAttemptedAt=null`, `error=null`; same `when` -> preserved `attempting`
-- Bridge restarted with the fix (app PID 15634); `/health` 200, `adb.ok=true`, cache current
+- Bridge restarted with the fix (then-current app PID 15634; current bridge PIDs are 22253/22263 at 18:07); `/health` 200, `adb.ok=true`, cache current
 - GitHub Actions run `40673506936` success on `c4c0808` (build-and-test + Docker smoke test)
 - Previous 2026-10-28 16:05-16:42 verification after merging KPI, bumping the PWA cache, and restoring ADB:
 - `npm run lint` pass; `npm run typecheck` pass; `npm run build` pass; server rebuilt and restarted
@@ -83,9 +91,10 @@ Updated: 2026-10-28 17:37 (Asia/Bangkok)
 - ADB is connected and the watchdog recovers lost connections, but the 16:45 offer was missed before the key-reuse fix. Verify the next live offer reaches `attemptAutoAccept` and the accept control; re-enable/re-pair Wireless debugging after reboot or if it is turned off.
 - Shopee order/status synchronization is out of scope for the read-only bridge handoff; it needs an authorized Shopee Partner API/webhook plus order matching, duplicate detection, and confirmation before any write action.
 - Official V2 API research is documented in `docs/shopee-partner-api-research.md`. Marketplace shop-order APIs and order-status push exist, but no public ShopeeFood/Food Driver offer API was found in the reviewed Open Platform catalog. Do not build a Food Driver connector unless Shopee confirms supported APIs, permissions, and account eligibility in writing.
-- 19 of 27 offer records still show `accept control not found` (23 failed, 2 accepted, 2 missed). No live offer has arrived since the 17:28 key-reuse fix, so successful auto-accept is not yet confirmed.
+- 19 of 27 offer records still show `accept control not found` (23 failed, 2 accepted, 2 missed). No live offer has arrived since the 16:45 key-reuse incident, so successful auto-accept and the one-tap action are not yet confirmed live.
+- The notification action itself was not tapped successfully because `/ui` captured the messaging app instead of the notification shade; verify the “สไลด์รับงาน” button manually on the next offer.
 - The KPI audit's Medium/Low items still need triage. The High queue-wait bug is fixed and covered by a regression test.
-- Bridge source is outside the FOD Git worktree; its current changes are local and not pushed.
+- Bridge source is outside the FOD Git worktree; its key-reuse, fallback, heartbeat, and accept-lock changes are local and not pushed.
 - Shopee Food Driver API access is an external blocker pending written confirmation from Shopee; the research document lists the official references and questions to resolve.
 
 ## Commands
@@ -120,4 +129,4 @@ curl -H "x-api-key: $KEY" http://127.0.0.1:3000/integrations/shopee-bridge/scree
 - On 2026-10-25 03:06 Android Phantom Process Killer trimmed Termux children and killed the copilot CLI; the monitor is disabled via ADB and Termux packages are battery-whitelisted. The device has 4 GB physical RAM (about 8 GB with RAM Expansion) and heavy swap, so multiple AI CLIs plus PostgreSQL/Redis can still make it unresponsive. The user controls further system changes.
 - Android may kill the supervisor under memory pressure (observed once while running Chromium E2E, alongside PostgreSQL/Redis). Re-run `npm run supervisor` to recover; it is idempotent.
 - Redis persistence lives in `$PREFIX/tmp/opencode/fod-redis.rdb`, not the repo.
-- The Shopee integration is intentionally read-only; do not add raw tap/accept proxy routes without a reviewed order-match and confirmation flow.
+- FOD's Shopee integration is intentionally read-only; do not add raw tap/accept proxy routes to FOD without a reviewed order-match and confirmation flow. The separate local bridge has a loopback-only `/action/accept-offer` for the notification action; it has no auth and must not be exposed beyond `127.0.0.1`.
