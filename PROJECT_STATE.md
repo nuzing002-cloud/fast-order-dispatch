@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-24 06:05 Asia/Bangkok
+Updated: 2026-10-25 03:33 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -31,35 +31,36 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Current runtime
 
-- Branch `main`; this batch records the E2E key-loading fix and the current bridge/ADB degraded state.
-- Server: PID 18605, `node dist/index.js`, port 3000, served by the detached supervisor; `/health` returns 200 with PostgreSQL storage.
-- Supervisor: PID 18552, `scripts/local-supervisor.sh` (app/PostgreSQL/Redis health loop).
-- PostgreSQL: PID 5971, port 5432.
-- Redis: PID 30796, 127.0.0.1:6379, data dir `$PREFIX/tmp/opencode` (`fod-redis.rdb`), outside the repo.
+- Branch `main` at `3de8566`, synced with `origin/main`; this batch records a runtime/ADB restore and a docs-only update.
+- Server: PID 1404, `node dist/index.js`, port 3000, served by the detached supervisor; `/health` returns 200 with `storage=postgres`, `queueSize=0`.
+- Supervisor: PID 1024, `scripts/local-supervisor.sh` (app/PostgreSQL/Redis health loop).
+- PostgreSQL: PID 1241, port 5432. Redis: PID 1386, 127.0.0.1:6379, data dir `$PREFIX/tmp/opencode` (`fod-redis.rdb`), outside the repo.
 - Logs: `$PREFIX/tmp/opencode/fod-server.log`, `fod-supervisor.log`, `fod-redis.log`, `fod-boot.log`.
 - Boot hooks: `~/.termux/boot/30-fast-order-dispatch.sh` (restored at 19:14, FOD after 5s) and `shopee-bridge.sh` (bridge after 45s); the FOD supervisor uses a lock so duplicate launches exit.
+- ADB: `127.0.0.1:5555` connected to `CPH2237`; bridge reports `adb.ok=true` and polls every 5s.
 - LAN URL: `http://10.38.25.243:3000` (same network only; the address changes with the mobile network).
-- Shopee bridge: `http://127.0.0.1:4020` returns 200, but ADB `127.0.0.1:5555` is disconnected (`connection refused`); 10 cached offers, no current events, 5s polling. Auto-accept remains enabled but cannot operate without ADB.
-- Shopee bridge supervisor/app: PIDs 7376/6867; supervisor now keeps the HTTP bridge alive while ADB is unavailable instead of restarting it repeatedly. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree).
+- Shopee bridge: `http://127.0.0.1:4020` returns 200 with ADB connected; 16 cached offers, one non-offer event (`Driver กำลังทำงาน`), no new offer since reconnect; screenshot cache is still from `2026-10-24T18:34Z`. Auto-open and auto-accept remain enabled.
+- Shopee bridge supervisor/app: PIDs 2814/2858. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree).
+- Android Phantom Process Killer trimmed Termux child processes at 2026-10-25 03:06 local and killed the copilot CLI. `settings_enable_monitor_phantom_procs=false` and `max_phantom_processes=2147483647` were set via ADB; `com.termux`, `com.termux.boot`, and `com.termux.api` are battery-whitelisted. The user controls any further system changes.
 - Shopee handoff: `http://127.0.0.1:3000/shopee-driver.html`; API endpoints require `x-api-key` when `API_KEYS` is configured.
 - Admin bridge panel: `http://127.0.0.1:3000/admin.html` (unified chronological Shopee order/notification feed, bridge status, heatmap screenshot).
 
 ## Last verification
 
-- `npm run lint` PASS (exit 0)
-- `npm run typecheck` PASS (exit 0)
-- `npm run build` PASS (exit 0, `dist/` regenerated)
+- 2026-10-25 03:25-03:28 local verification after restoring ADB and services:
+- `npm run lint` PASS (exit 0); `npm run typecheck` PASS (exit 0); `npm run build` PASS (exit 0, `dist/` regenerated).
 - `npm test -- --runInBand` PASS: 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration without `TEST_DATABASE_URL`).
-- `node scripts/e2e-ui.js` PASS: order `order_bfff9b80-1dc7-4062-b467-eaee000bb178`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`. The runner now loads `.env` and selects an admin API key so the documented command works without manual key export.
-- Bridge supervisor syntax check PASS; observed for 35 seconds with ADB offline and the bridge PID remained stable, with a single degraded-state log instead of restart churn.
-- Current FOD `/health` -> 200; current bridge `/health` -> 200 with explicit ADB `device not found`; `adb devices -l` is empty and `adb connect 127.0.0.1:5555` is refused.
+- `node scripts/e2e-ui.js` PASS: order `order_9350ec55-6dc9-420e-946e-1582d2ecfb68`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`, shots in `$PREFIX/tmp/fod-e2e`.
+- Current FOD `/health` -> 200 (`storage=postgres`, `queueSize=0`); bridge `/health` -> 200 with `adb.ok=true`; `adb devices -l` lists `127.0.0.1:5555 device CPH2237`.
+- Bridge events after reconnect: one non-offer notification (`Driver กำลังทำงาน`); no new offer was available to validate auto-accept.
+- Historical: bridge supervisor syntax check PASS; previously observed for 35 seconds with ADB offline and the bridge PID remained stable, with a single degraded-state log instead of restart churn.
 - Unified feed browser fixture PASS with live Shopee data (10 activity cards); installed browser cache contains only `fod-v5`.
 - Bridge console fixture PASS: one linked new offer and one regular notification appear in one time-sorted table, order number displayed once.
 - Bridge classifier checks PASS: explicit new-order phrases match; customer messages, pickup-ready notices, and routine driver notifications do not.
-- Previous bridge check reduced the order list from 32 to 10 after filtering false order classifications; ADB has since disconnected.
+- Previous bridge check reduced the order list from 32 to 10 after filtering false order classifications; ADB has since reconnected.
 - Driver location tracking browser test PASS (geolocation permission/watch, API update, stop); original driver coordinates restored.
-- `/push/public-key` returns HTTP 200 with a configured key; this was verified before the current ADB disconnect.
-- Previous live bridge check showed `configured=true`, `capability=read-only`, 10 offers, and screenshot available; this is not currently verified because ADB is disconnected.
+- `/push/public-key` returns HTTP 200 with a configured key (re-checked 2026-10-25 03:28).
+- Current bridge integration status shows `configured=true`, `capability=read-only`, `reachable=true`, `lastRefreshSucceeded=true`, 16 cached orders, and a cached screenshot from before reconnect.
 - Previous screenshot check: `GET /integrations/shopee-bridge/screenshot` -> 200 `image/png`, 653301 bytes.
 - Previous webhook check: loopback POST -> `{ok:true,received:1,duplicates:0}`; repeat -> `duplicates:1`.
 - Previous command-route check: `/integrations/shopee-bridge/open` and `/accept` -> 404 (no write proxy exposed).
@@ -70,6 +71,8 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Files changed in this batch
 
+- `PROJECT_STATE.md`, `STATUS.md` — 2026-10-25 runtime/ADB restore, Phantom Process Killer note, and fresh verification results (docs only)
+- `docs/shopee-partner-api-research.md` — official V2 marketplace API/auth/webhook research; no public Food Driver offer API found, so Food Driver integration remains blocked pending Shopee confirmation
 - `src/integrations/ShopeeBridgeClient.ts` — typed read-only HTTP client for bridge health/events/orders/screenshot with SSRF-safe URL validation, timeouts, size limits, and PNG verification
 - `src/integrations/ShopeeBridgeService.ts` — cached polling snapshot, event dedupe, screenshot cache, read-only status model
 - `scripts/e2e-ui.js` — loads local `.env` for the API key and selects an admin key from `API_KEYS`
@@ -96,8 +99,9 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 - Production deploy not performed: no host/domain/credentials; cannot be completed without those external inputs.
 - Reboot autostart is installed but not verified by an actual reboot; Termux:Boot must be opened once and Android battery settings may affect it. The FOD hook had been left disabled during bridge setup and was restored in this batch.
-- ADB wireless endpoint `127.0.0.1:5555` is currently unavailable (`adb devices -l` is empty, connect is refused). Enable/pair Android Wireless debugging or update `ADB_SERIAL` to the active paired endpoint; until then live bridge notifications, screenshot refresh, and auto-accept cannot run. Auto-accept remains enabled and may act on eligible offers once ADB is restored.
+- ADB wireless endpoint `127.0.0.1:5555` is connected to `CPH2237` at this checkpoint, but no new offer has arrived since reconnect; live notifications, screenshot refresh, and the auto-accept gesture are still unverified. Auto-accept remains enabled and may act once an eligible offer appears.
 - The Shopee integration is strictly read-only: bridge events and orders are displayed only and never create/assign/accept orders in this system. Real order sync needs an authorized Shopee Partner API/webhook plus an order-match/confirmation flow.
+- Official Shopee Open Platform research is recorded in `docs/shopee-partner-api-research.md`: marketplace shop-order APIs and order-status pushes exist, but no public ShopeeFood/Food Driver offer API was found in the reviewed V2 catalog. Food Driver integration remains blocked pending written confirmation of an authorized API and account eligibility from Shopee; no private app endpoints, cookies, or tokens are in scope.
 - Six historical offer records still show `accept control not found`; no active new offer was available to validate the actual accept gesture after tightening classification. Do not treat auto-accept as verified until an authorized live offer reaches the matching UI control.
 - Bridge changes above are local only because `shopee-bridge` is not a Git worktree; they are running under its supervisor but cannot be pushed with the FOD repository.
 - The heatmap appears only after the bridge's area check has produced `/area/latest.png`; bridge data is cached in memory and re-polled after a restart.
@@ -106,13 +110,15 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - Payments use the mock provider; no real charges.
 - Driver rating stays `0.0/5` because no rating-capture workflow exists.
 - The PostgreSQL integration Jest suite is skipped locally unless `TEST_DATABASE_URL` is set; CI runs it.
+- On 2026-10-25 03:06 Android Phantom Process Killer trimmed Termux child processes and killed the copilot CLI. The monitor is now disabled via ADB and Termux packages are battery-whitelisted, but the device has 4 GB physical RAM (about 8 GB with RAM Expansion) and heavy swap; running multiple AI CLIs plus PostgreSQL/Redis can still make it unresponsive. The user controls further system changes.
 - Android can kill the supervisor under memory pressure (observed on 2026-10-22 while running Chromium E2E). Re-run `npm run supervisor` to recover; Termux has no guaranteed respawn without root or a foreground service.
 - A full local test run can occasionally flake the Redis adapter test under parallel load; isolated and repeated runs pass.
 
 ## Next actions
 
-1. Restore Android Wireless debugging/ADB pairing (or configure the active `ADB_SERIAL`) and verify `adb devices -l` plus bridge health before relying on live Shopee data.
+1. Verify the auto-accept gesture with a real new offer while ADB stays connected; do not rely on it until the matching UI control is confirmed.
 2. On the next natural reboot, confirm the FOD supervisor and app return automatically, and that the bridge hook also starts; inspect `fod-boot.log` and `shopee-bridge/boot.log`.
 3. Keep the admin bridge panel open to verify live status; use the 4020 console area check when a newer heatmap is needed.
 4. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
-5. Before adding any write actions, implement Shopee order matching, duplicate detection, and explicit confirmation; do not proxy raw tap/accept commands.
+5. Obtain written Shopee confirmation of a supported, authorized Food Driver API, scopes, event types, and region eligibility before designing any Food Driver connector; see `docs/shopee-partner-api-research.md`.
+6. Before adding any write actions, implement Shopee order matching, duplicate detection, and explicit confirmation; do not proxy raw tap/accept commands.
