@@ -2,7 +2,7 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-28 16:15 (Asia/Bangkok)
+Updated: 2026-10-28 16:42 (Asia/Bangkok)
 
 ## Current state
 
@@ -10,8 +10,8 @@ Updated: 2026-10-28 16:15 (Asia/Bangkok)
 - CI baseline: run `40038995136` green on `3de8566`; CI for the KPI merge is pending
 - Local server: `http://127.0.0.1:3000` from rebuilt `dist/` (PostgreSQL), PID 8613; `/health` 200 (`queueSize=0`); admin KPI UI and `/metrics/kpi` live
 - Supervisor: detached `scripts/local-supervisor.sh`, PID 22368; PostgreSQL PID 22386 and Redis PID 22402
-- ADB: `127.0.0.1:5555` unavailable (`device not found`); bridge reports `adb.ok=false` and is running on cached data
-- Shopee bridge: `http://127.0.0.1:4020` 200; supervisor/app PIDs 22622/22633; 27 cached orders, 0 active events, 1s poll; auto-open/auto-accept remain enabled
+- ADB: `127.0.0.1:5555` connected (`CPH2237`; `adb shell` OK); `service.adb.tcp.port=5555`; bridge reports `adb.ok=true`
+- Shopee bridge: `http://127.0.0.1:4020` 200; supervisor/app PIDs 25522/22633; 27 cached orders, 0 active events, 1s poll; auto-open/auto-accept enabled; supervisor watchdog reconnects ADB every 10s when lost
 - Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` and bridge hook installed but still not verified by a real reboot
 - LAN URL: `http://10.38.25.243:3000` (last verified; dynamic address)
 - Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis,boot}.log`
@@ -33,15 +33,18 @@ Updated: 2026-10-28 16:15 (Asia/Bangkok)
 - CI fixes: Node 24, VAPID keys generated for smoke test, container logs always printed
 - E2E harness: creates an order, clicks READY in the admin UI (real dispatch), advances only that order through the driver UI to `DELIVERED`, verifies persistence in admin, and cleans up in `finally`
 - Local supervisor: health-checked app restart, PostgreSQL/Redis recovery, single-instance lock, Termux:Boot autostart with wake lock
+- Bridge ADB watchdog: detects `adb-not-ok`, retries `adb connect 127.0.0.1:5555` every 10s, and logged automatic recovery after a forced disconnect
 
 ## Verification (last run)
 
-- 2026-10-28 16:05-16:20 verification after merging KPI and bumping the PWA cache:
+- 2026-10-28 16:05-16:42 verification after merging KPI, bumping the PWA cache, and restoring ADB:
 - `npm run lint` pass; `npm run typecheck` pass; `npm run build` pass; server rebuilt and restarted
 - `npm test -- --runInBand` 137 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` E2E PASS; order `order_a4b2915a-925f-4502-a823-e09a943a3b52` DELIVERED, `consoleErrors: []`, PWA assets OK
 - KPI live: admin-only `GET /metrics/kpi` 200; 2026-10-28 range returned 2 delivered, 256 THB revenue, 56 THB fees; KPI markup is served by `/admin.html`; service worker cache is `fod-v6`
-- FOD `/health` 200 (`storage=postgres`, `queueSize=0`); bridge `/health` 200 with `adb.ok=false` (`device not found`), 27 cached orders, auto-accept enabled
+- FOD `/health` 200 (`storage=postgres`, `queueSize=0`); bridge `/health` 200 with `adb.ok=true`, current poll, 27 cached orders, 0 active offers, auto-accept enabled
+- ADB restored: `adb devices` shows `127.0.0.1:5555 device CPH2237`; `adb shell` returned `ADB_OK`; `service.adb.tcp.port=5555`
+- Watchdog test: `adb disconnect 127.0.0.1:5555` -> supervisor logged `ADB reconnect: connected` and bridge returned to `adb.ok=true` within ~10s
 - Historical 2026-10-25 03:25-03:28 verification after restoring ADB/services:
 - `npm run lint` pass; `npm run typecheck` pass; `npm run build` pass
 - `npm test -- --runInBand` 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
@@ -67,7 +70,7 @@ Updated: 2026-10-28 16:15 (Asia/Bangkok)
 
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
 - Real reboot test for the FOD and bridge boot hooks (installed and exercised manually, but no reboot performed).
-- ADB is offline (`device not found`) and the bridge is using cached data. Restore Wireless debugging, then verify live notifications, screenshot refresh, and the auto-accept gesture with a real offer before relying on them.
+- ADB is connected and the watchdog recovers lost connections, but no new offer has arrived since reconnect. Verify live notifications, screenshot refresh, and auto-accept with a real offer; re-enable/re-pair Wireless debugging after reboot or if it is turned off.
 - Shopee order/status synchronization is out of scope for the read-only bridge handoff; it needs an authorized Shopee Partner API/webhook plus order matching, duplicate detection, and confirmation before any write action.
 - Official V2 API research is documented in `docs/shopee-partner-api-research.md`. Marketplace shop-order APIs and order-status push exist, but no public ShopeeFood/Food Driver offer API was found in the reviewed Open Platform catalog. Do not build a Food Driver connector unless Shopee confirms supported APIs, permissions, and account eligibility in writing.
 - Six historical offer records still show `accept control not found`. No live offer was available to verify the accept control after the classifier fix, so successful auto-accept is not yet confirmed.

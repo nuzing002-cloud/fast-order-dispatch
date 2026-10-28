@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-28 16:15 Asia/Bangkok
+Updated: 2026-10-28 16:42 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -25,7 +25,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | 12 | Documentation for install/run/maintenance | VERIFIED_COMPLETE | `README.md`, `AGENTS.md`, `STATUS.md`, this file |
 | 13 | Production deployment to a public host | BLOCKED | Requires server/host, domain, TLS origin, real API keys, payment credentials, VAPID keys, and hosting cost |
 | 14 | Shopee Food Driver navigation handoff (`/shopee-driver.html`, `/integrations/shopee-driver/{links,deep-link}`) | VERIFIED_COMPLETE | API tests (`navigation-only`, 4 destinations, 400 on unknown), page served, live curl 200; no private Shopee API or order sync |
-| 15 | Shopee bridge integration on port 4020 (status/orders/events/screenshot + optional webhook) | PARTIAL | Bridge HTTP endpoint is healthy, but Android ADB at `127.0.0.1:5555` is unavailable; live device data cannot currently refresh |
+| 15 | Shopee bridge integration on port 4020 (status/orders/events/screenshot + optional webhook) | PARTIAL | Bridge HTTP endpoint is healthy and ADB is connected at `127.0.0.1:5555`; no new offer has arrived since reconnect to verify live notification/screenshot refresh |
 | 16 | Show incoming order notifications and regular notifications in one Shopee activity feed | VERIFIED_COMPLETE | Admin and bridge-console browser fixtures show both together; linked orders appear once; PWA cache is `fod-v6` |
 | 17 | Distinguish actionable new offers from ordinary order-related notifications | VERIFIED_COMPLETE | Explicit offer classifier filters 22 false order records, suppresses startup replay, and limits auto-accept to new offers |
 | 18 | Admin KPI report with date ranges, totals, daily/driver breakdowns | VERIFIED_COMPLETE | Admin-only `GET /metrics/kpi` live 200; merged as `db47146`; KPI/PostgreSQL tests; all local verification passed |
@@ -38,10 +38,10 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - PostgreSQL: PID 22386, port 5432. Redis: PID 22402, 127.0.0.1:6379, data dir `$PREFIX/tmp/opencode` (`fod-redis.rdb`), outside the repo.
 - Logs: `$PREFIX/tmp/opencode/fod-server.log`, `fod-supervisor.log`, `fod-redis.log`, `fod-boot.log`.
 - Boot hooks: `~/.termux/boot/30-fast-order-dispatch.sh` (FOD after 5s) and `shopee-bridge.sh` (bridge after 45s); the FOD supervisor uses a lock so duplicate launches exit.
-- ADB: `127.0.0.1:5555` unavailable (`adb: device '127.0.0.1:5555' not found`); Wireless debugging is off. Bridge live polling is degraded until it is restored.
+- ADB: `127.0.0.1:5555` connected (`adb devices` shows `CPH2237`); `adb shell` returns `ADB_OK`; `service.adb.tcp.port=5555`. Wireless debugging must stay enabled for the loopback endpoint.
 - LAN URL: `http://10.38.25.243:3000` (last verified; same network only, the address changes with the mobile network).
-- Shopee bridge: `http://127.0.0.1:4020` returns 200 with `adb.ok=false`; 27 cached orders, 0 active events, 1s poll, auto-open and auto-accept enabled, history cache for 6 dates.
-- Shopee bridge supervisor/app: PIDs 22622/22633. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree).
+- Shopee bridge: `http://127.0.0.1:4020` returns 200 with `adb.ok=true`; 27 cached orders, 0 active events, 1s poll, auto-open and auto-accept enabled, history cache for 6 dates.
+- Shopee bridge supervisor/app: PIDs 25522/22633. The supervisor retries `adb connect 127.0.0.1:5555` every 10s whenever health reports `adb-not-ok`; a forced disconnect recovered automatically. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree).
 - Android Phantom Process Killer trimmed Termux child processes at 2026-10-25 03:06 local and killed the copilot CLI. `settings_enable_monitor_phantom_procs=false` and `max_phantom_processes=2147483647` were set via ADB; `com.termux`, `com.termux.boot`, and `com.termux.api` are battery-whitelisted. The user controls any further system changes.
 - KPI reporting: admin-only `GET /metrics/kpi?from=...&to=...` with Bangkok date handling and daily/driver breakdowns; live check on 2026-10-28 returned 2 delivered orders, 256 THB revenue, and 56 THB delivery fees.
 - Shopee handoff: `http://127.0.0.1:3000/shopee-driver.html`; API endpoints require `x-api-key` when `API_KEYS` is configured.
@@ -49,13 +49,15 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Last verification
 
-- 2026-10-28 16:05-16:15 local verification after merging KPI into `main` and bumping the PWA cache:
+- 2026-10-28 16:05-16:42 local verification after merging KPI, bumping the PWA cache, and restoring ADB:
 - `npm run lint` PASS; `npm run typecheck` PASS; `npm run build` PASS (`dist/` regenerated and server restarted).
 - `npm test -- --runInBand` PASS: 137 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`).
 - `node scripts/e2e-ui.js` PASS: order `order_a4b2915a-925f-4502-a823-e09a943a3b52`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`, PWA assets OK.
 - KPI live: admin-only `GET /metrics/kpi` -> 200; 2026-10-28 range returned 2 delivered, 256 THB revenue, 56 THB fees; KPI markup is served by `/admin.html`; `/sw.js` serves cache `fod-v6`.
-- FOD `/health` -> 200 (`storage=postgres`, `queueSize=0`); bridge `/health` -> 200 with `adb.ok=false` (`device '127.0.0.1:5555' not found`), 27 cached orders, auto-accept still enabled.
-- Previous CI baseline: run `40038995136` success on `3de8566`; the post-merge push is pending.
+- FOD `/health` -> 200 (`storage=postgres`, `queueSize=0`); bridge `/health` -> 200 with `adb.ok=true`, last poll current, 27 cached orders, 0 active offers, auto-accept enabled.
+- ADB restored: `adb devices` shows `127.0.0.1:5555 device CPH2237`; `adb shell` returned `ADB_OK`; `service.adb.tcp.port=5555`.
+- Watchdog test: `adb disconnect 127.0.0.1:5555` then wait ~10s -> supervisor logged `ADB reconnect: connected` and bridge `adb.ok=true` again.
+- Previous CI baseline: run `40038995136` success on `3de8566`; KPI/docs pushes are tracked separately.
 - Historical 2026-10-25 03:25-03:28 local verification after restoring ADB and services:
 - `npm run lint` PASS (exit 0); `npm run typecheck` PASS (exit 0); `npm run build` PASS (exit 0, `dist/` regenerated).
 - `npm test -- --runInBand` PASS: 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration without `TEST_DATABASE_URL`).
@@ -82,6 +84,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 - `PROJECT_STATE.md`, `STATUS.md` — 2026-10-28 KPI merge/deploy verification and runtime state
 - `public/sw.js`, `test/api.test.ts` — PWA cache bumped to `fod-v6` so installed clients pick up the KPI admin assets
+- `/data/data/com.termux/files/home/shopee-bridge/supervisor.sh` — local-only ADB watchdog: retries `adb connect 127.0.0.1:5555` every 10s while health reports `adb-not-ok` (verified with a forced disconnect)
 - `src/types/kpi.ts`, `src/store/DispatchStore.ts`, `src/store/PostgresDispatchStore.ts`, `src/services/BatchProcessingService.ts`, `src/index.ts`, `src/openapi.ts` — admin-only KPI report, validation, memory/SQL aggregation, and API documentation
 - `public/admin.html`, `public/admin.js` — Thai KPI cards and daily/driver reports with today/7/30-day selectors
 - `test/Kpi.test.ts`, `test/PostgresStore.test.ts` — KPI authorization, range, aggregation, UI markup, and PGlite coverage
@@ -113,7 +116,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 - Production deploy not performed: no host/domain/credentials; cannot be completed without those external inputs.
 - Reboot autostart is installed but not verified by an actual reboot; Termux:Boot must be opened once and Android battery settings may affect it. The FOD hook had been left disabled during bridge setup and was restored in this batch.
-- ADB wireless endpoint `127.0.0.1:5555` is unavailable (`device not found`); the bridge is running on cached data (27 orders) with auto-accept enabled. Restore Wireless debugging before relying on live notifications, screenshot refresh, or the auto-accept gesture.
+- ADB is connected at `127.0.0.1:5555` and the watchdog recovers dropped connections, but no new offer has arrived since reconnect. Live notifications, screenshot refresh, and the auto-accept gesture still need a real offer; after reboot or if Wireless debugging is turned off, re-enable/re-pair once.
 - The Shopee integration is strictly read-only: bridge events and orders are displayed only and never create/assign/accept orders in this system. Real order sync needs an authorized Shopee Partner API/webhook plus an order-match/confirmation flow.
 - Official Shopee Open Platform research is recorded in `docs/shopee-partner-api-research.md`: marketplace shop-order APIs and order-status pushes exist, but no public ShopeeFood/Food Driver offer API was found in the reviewed V2 catalog. Food Driver integration remains blocked pending written confirmation of an authorized API and account eligibility from Shopee; no private app endpoints, cookies, or tokens are in scope.
 - Six historical offer records still show `accept control not found`; no active new offer was available to validate the actual accept gesture after tightening classification. Do not treat auto-accept as verified until an authorized live offer reaches the matching UI control.
@@ -130,7 +133,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Next actions
 
-1. Restore Android Wireless debugging/ADB pairing, then verify live notifications, screenshot refresh, and the auto-accept gesture with a real new offer; do not rely on auto-accept until the matching UI control is confirmed.
+1. With ADB connected, verify live notifications, screenshot refresh, and the auto-accept gesture with a real new offer; do not rely on auto-accept until the matching UI control is confirmed.
 2. On the next natural reboot, confirm the FOD supervisor and app return automatically, and that the bridge hook also starts; inspect `fod-boot.log` and `shopee-bridge/boot.log`.
 3. Keep the admin bridge panel open to verify live status; use the 4020 console area check when a newer heatmap is needed.
 4. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
