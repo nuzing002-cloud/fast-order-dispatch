@@ -132,7 +132,7 @@ test('serves PWA manifest, service worker, and icons', async () => {
   const sw = await fetch(`${baseUrl}/sw.js`);
   expect(sw.status).toBe(200);
   expect(sw.headers.get('content-type')).toContain('javascript');
-  expect(await sw.text()).toContain('fod-v5');
+  expect(await sw.text()).toContain('fod-v6');
 
   const admin = await fetch(`${baseUrl}/admin.html`);
   expect(admin.status).toBe(200);

@@ -2,18 +2,18 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-25 03:33 (Asia/Bangkok)
+Updated: 2026-10-28 16:15 (Asia/Bangkok)
 
 ## Current state
 
-- Branch: `main`, synced with `origin/main`; HEAD `3de8566`
-- CI baseline: run `40025025770` green on `7290aea`
-- Local server: `http://127.0.0.1:3000` from `dist/` (PostgreSQL), PID 1404; `/health` 200 (`queueSize=0`)
-- Supervisor: detached `scripts/local-supervisor.sh`, PID 1024; PostgreSQL PID 1241 and Redis PID 1386
-- ADB: `127.0.0.1:5555` connected (`CPH2237`); bridge reports `adb.ok=true` and 5s polling
-- Shopee bridge: `http://127.0.0.1:4020` 200; supervisor/app PIDs 2814/2858; 16 cached offers, one non-offer event, no new offer since reconnect; cached screenshot predates reconnect; auto-open/auto-accept remain enabled
+- Branch: `main`; HEAD `db47146` (KPI merge) plus the local docs/PWA update below; push pending after verification
+- CI baseline: run `40038995136` green on `3de8566`; CI for the KPI merge is pending
+- Local server: `http://127.0.0.1:3000` from rebuilt `dist/` (PostgreSQL), PID 8613; `/health` 200 (`queueSize=0`); admin KPI UI and `/metrics/kpi` live
+- Supervisor: detached `scripts/local-supervisor.sh`, PID 22368; PostgreSQL PID 22386 and Redis PID 22402
+- ADB: `127.0.0.1:5555` unavailable (`device not found`); bridge reports `adb.ok=false` and is running on cached data
+- Shopee bridge: `http://127.0.0.1:4020` 200; supervisor/app PIDs 22622/22633; 27 cached orders, 0 active events, 1s poll; auto-open/auto-accept remain enabled
 - Reboot autostart: FOD hook `~/.termux/boot/30-fast-order-dispatch.sh` and bridge hook installed but still not verified by a real reboot
-- LAN URL: `http://10.38.25.243:3000` (dynamic address)
+- LAN URL: `http://10.38.25.243:3000` (last verified; dynamic address)
 - Logs: `/data/data/com.termux/files/usr/tmp/opencode/fod-{server,supervisor,redis,boot}.log`
 - System: Phantom Process Killer disabled via ADB (`settings_enable_monitor_phantom_procs=false`, `max_phantom_processes=2147483647`); Termux packages battery-whitelisted; the user controls further system changes
 
@@ -21,6 +21,7 @@ Updated: 2026-10-25 03:33 (Asia/Bangkok)
 
 - Order lifecycle: PENDING -> READY -> ASSIGNED -> PICKED_UP -> IN_DELIVERY -> DELIVERED
 - Dispatch only restaurant-ready orders; nearest-first batching, up to 4 orders per driver, pipelined top-up
+- Admin KPI reporting v1: admin-only `GET /metrics/kpi`, validated date range, success/on-time/duration metrics, refund-excluded revenue, daily and per-driver tables in the admin UI
 - PostgreSQL persistence, auth roles/API keys, idempotency, audit log, rate limiting, payments/refunds, driver earnings/payouts, decline/pause, web push, Prometheus metrics, PWA UI
 - Minimum delivery fee 28 THB (`MIN_DELIVERY_FEE`), enforced in API and UI
 - Shopee Food Driver navigation handoff: `/shopee-driver.html` plus `/integrations/shopee-driver/links` and `/integrations/shopee-driver/deep-link` (navigation-only, no private API or order sync)
@@ -35,11 +36,17 @@ Updated: 2026-10-25 03:33 (Asia/Bangkok)
 
 ## Verification (last run)
 
-- 2026-10-25 03:25-03:28 verification after restoring ADB/services:
+- 2026-10-28 16:05-16:20 verification after merging KPI and bumping the PWA cache:
+- `npm run lint` pass; `npm run typecheck` pass; `npm run build` pass; server rebuilt and restarted
+- `npm test -- --runInBand` 137 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
+- `node scripts/e2e-ui.js` E2E PASS; order `order_a4b2915a-925f-4502-a823-e09a943a3b52` DELIVERED, `consoleErrors: []`, PWA assets OK
+- KPI live: admin-only `GET /metrics/kpi` 200; 2026-10-28 range returned 2 delivered, 256 THB revenue, 56 THB fees; KPI markup is served by `/admin.html`; service worker cache is `fod-v6`
+- FOD `/health` 200 (`storage=postgres`, `queueSize=0`); bridge `/health` 200 with `adb.ok=false` (`device not found`), 27 cached orders, auto-accept enabled
+- Historical 2026-10-25 03:25-03:28 verification after restoring ADB/services:
 - `npm run lint` pass; `npm run typecheck` pass; `npm run build` pass
 - `npm test -- --runInBand` 132 passed / 4 skipped, 20 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` E2E PASS; order `order_9350ec55-6dc9-420e-946e-1582d2ecfb68` DELIVERED, `consoleErrors: []`, shots in `$PREFIX/tmp/fod-e2e`
-- FOD `/health` 200 (`storage=postgres`, `queueSize=0`); bridge `/health` 200 with `adb.ok=true`; `adb devices -l` shows `127.0.0.1:5555 device CPH2237`
+- At that checkpoint, FOD `/health` 200 (`storage=postgres`, `queueSize=0`); bridge `/health` 200 with `adb.ok=true`; `adb devices -l` showed `127.0.0.1:5555 device CPH2237`
 - Bridge events after reconnect: one non-offer notification (`Driver กำลังทำงาน`); no new offer to validate auto-accept
 - `/push/public-key` 200; `/drivers` 200 with the target driver `AVAILABLE`
 - Historical: browser fixture confirmed one linked order notification plus one ordinary notification as two cards without duplication; bridge-console fixture confirmed one table with no duplicated order number; classifier checks reject customer messages and pickup-ready notices
@@ -60,7 +67,7 @@ Updated: 2026-10-25 03:33 (Asia/Bangkok)
 
 - Production deployment to a real host: requires `DOMAIN`, public HTTPS origin, real `API_KEYS`, payment credentials, VAPID keys, PostgreSQL/Redis host, and a server with Docker.
 - Real reboot test for the FOD and bridge boot hooks (installed and exercised manually, but no reboot performed).
-- ADB is connected now, but no new offer has arrived since reconnect. Verify live notifications, screenshot refresh, and the auto-accept gesture with a real offer before relying on them.
+- ADB is offline (`device not found`) and the bridge is using cached data. Restore Wireless debugging, then verify live notifications, screenshot refresh, and the auto-accept gesture with a real offer before relying on them.
 - Shopee order/status synchronization is out of scope for the read-only bridge handoff; it needs an authorized Shopee Partner API/webhook plus order matching, duplicate detection, and confirmation before any write action.
 - Official V2 API research is documented in `docs/shopee-partner-api-research.md`. Marketplace shop-order APIs and order-status push exist, but no public ShopeeFood/Food Driver offer API was found in the reviewed Open Platform catalog. Do not build a Food Driver connector unless Shopee confirms supported APIs, permissions, and account eligibility in writing.
 - Six historical offer records still show `accept control not found`. No live offer was available to verify the accept control after the classifier fix, so successful auto-accept is not yet confirmed.
