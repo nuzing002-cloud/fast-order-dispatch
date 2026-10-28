@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-28 18:10 Asia/Bangkok
+Updated: 2026-10-28 18:42 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -40,9 +40,10 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - Boot hooks: `~/.termux/boot/30-fast-order-dispatch.sh` (FOD after 5s) and `shopee-bridge.sh` (bridge after 45s); the FOD supervisor uses a lock so duplicate launches exit.
 - ADB: `127.0.0.1:5555` connected (`adb devices` shows `CPH2237`); `adb shell` returns `ADB_OK`; `service.adb.tcp.port=5555`. Wireless debugging must stay enabled for the loopback endpoint. Non-root `persist.adb.tcp.port` is denied, so after reboot or Wireless-debugging-off the endpoint must be re-enabled/re-paired.
 - LAN URL: `http://10.40.184.249:3000` (current; `10.38.25.243` no longer responds; the address changes with the mobile network).
-- Shopee bridge: `http://127.0.0.1:4020` returns 200 with `adb.ok=true`; 27 offer records (23 failed, 2 accepted, 2 missed), 0 active offers, 1s poll, auto-open and auto-accept enabled; `pendingOffers=0`, `acceptBusy=false`, heartbeat current.
-- Shopee bridge supervisor/app: PIDs 22253/22263 at 18:07. The supervisor retries `adb connect 127.0.0.1:5555` every 10s whenever health reports `adb-not-ok`; a forced disconnect at 18:09 recovered in ~11s without restarting the app and produced a `shopee-bridge-status` notification; heartbeat-based stale checks avoid restarting during paused/history-busy periods. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree). The latest offer at 16:45 reused a failed notification key and was not attempted; local `server.js` now resets state when the notification `when` changes.
+- Shopee bridge: `http://127.0.0.1:4020` returns 200 with `adb.ok=true`; 27 offer records (22 failed, 3 accepted, 2 missed), 0 active offers, 1s poll, auto-open and auto-accept enabled; `pendingOffers=0`, `acceptBusy=false`, heartbeat current.
+- Shopee bridge supervisor/app: PIDs 26269/26280 at 18:42. The supervisor retries `adb connect 127.0.0.1:5555` every 10s whenever health reports `adb-not-ok`; a forced disconnect at 18:09 recovered in ~11s without restarting the app and produced a `shopee-bridge-status` notification; heartbeat-based stale checks avoid restarting during paused/history-busy periods. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree). The 16:45 offer reused a failed notification key and was not attempted; the 18:37 offer was auto-accepted by Shopee and falsely reported as failed before the new detection. Local `server.js` now resets state when the notification `when` changes and recognizes auto-accepted screens.
 - Bridge one-tap/fallback: `sendOfferFallback` schedules 15s/40s alerts; the Termux notification action runs `accept-now.sh <orderId>`; `/action/accept-offer` uses a shared accept lock and aborts if `tapNotification` cannot uniquely find the offer; `resumeOfferFallbacks()` re-alerts or reschedules pending offers on restart.
+- False failure at 18:37: a real ฿38 offer was auto-accepted by Shopee itself; the bridge tapped the notification but found no swipe control, marked it failed, and sent “รับออเดอร์ไม่สำเร็จ”. Screenshot `5af3b9dcbc198616.png` shows “คำสั่งซื้อใหม่ถูกรับอัตโนมัติ”; `screenLooksAccepted()` now treats it as accepted, and order `0|...|2|null|10371` was corrected to `accepted`.
 - Android Phantom Process Killer trimmed Termux child processes at 2026-10-25 03:06 local and killed the copilot CLI. `settings_enable_monitor_phantom_procs=false` and `max_phantom_processes=2147483647` were set via ADB; `com.termux`, `com.termux.boot`, and `com.termux.api` are battery-whitelisted. The user controls any further system changes.
 - KPI reporting: admin-only `GET /metrics/kpi?from=...&to=...` with Bangkok date handling and daily/driver breakdowns; live check on 2026-10-28 17:32 returned `avgQueueWaitMs=58`, 25 delivered orders, 3,182 THB revenue, and 682 THB delivery fees.
 - Shopee handoff: `http://127.0.0.1:3000/shopee-driver.html`; API endpoints require `x-api-key` when `API_KEYS` is configured.
@@ -52,7 +53,11 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 - 2026-10-28 18:07-18:09 bridge one-tap/fallback hardening:
 - `node --check server.js`, `bash -n supervisor.sh`, `bash -n accept-now.sh` PASS.
-- Bridge restarted: supervisor PID 22253, app PID 22263; `/health` 200, `adb.ok=true`, `pendingOffers=0`, `acceptBusy=false`, `lastHeartbeatAt` current.
+- Bridge restarted: supervisor PID 26269, app PID 26280 at 18:42; `/health` 200, `adb.ok=true`, `pendingOffers=0`, `acceptBusy=false`, `lastHeartbeatAt` current.
+- 2026-10-28 18:37-18:42 live-offer false-failure analysis:
+- A real ฿38 offer at 18:37:42 was auto-accepted by Shopee; the bridge tapped it at 18:37:46, then reported `accept control not found` at 18:37:50 and sent `รับออเดอร์ไม่สำเร็จ`.
+- Screenshot `~/.local/share/shopee-bridge/shots/5af3b9dcbc198616.png` shows “คำสั่งซื้อใหม่ถูกรับอัตโนมัติ” with “อาหารพร้อมรับแล้ว” and “ตกลง”, confirming the offer was not missed.
+- Added `screenLooksAccepted()` and corrected order `0|...|2|null|10371` to `accepted`; stale failure notification removed. The new path has not yet been exercised by a fresh live offer.
 - Forced `adb disconnect 127.0.0.1:5555`: supervisor logged `bridge reachable but ADB device is unavailable; keeping app running`, reconnected, then `ADB connection restored (serial=127.0.0.1:5555)`; app PID 22263 stayed unchanged and `shopee-bridge-status` notification was present (removed after test).
 - Synthetic restart test in a temp `DATA_DIR`: a 20s-old pending offer resumed at startup, `pendingOffers=1`, `lastFallbackAt` set, and fake `termux-notification` received the offer title plus `accept-now.sh 'test-key'` action.
 - `./accept-now.sh test-no-such-offer` returned `{"ok":false,"error":"offer not found"}` and produced result notification `bridge-accept-result`; test notification removed.
@@ -63,7 +68,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - `node scripts/e2e-ui.js` PASS: order `order_0fa07dc8-04a3-4fe2-ae09-8792fd4a1636`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`, PWA assets OK.
 - KPI live: `GET /metrics/kpi?days=1` 200; `avgQueueWaitMs=58` (non-zero), 25 delivered, 3,182 THB revenue, 682 THB fees. The previous implementation cleared `queuedAt` on assignment and always produced 0.
 - Bridge offer-key fix verified by evaluating the real `upsertOrder` source with a seeded failed record: a new `when` resets `status=new`, `acceptAttemptedAt=null`, `error=null`; the same `when` preserves an in-flight `attempting` status.
-- Bridge restarted with the fix (then-current app PID 15634; current bridge PIDs are 22253/22263 at 18:07); `/health` 200, `adb.ok=true`, current poll, 27 offer records.
+- Bridge restarted with the fix (then-current app PID 15634; current bridge PIDs are 26269/26280 at 18:42); `/health` 200, `adb.ok=true`, current poll, 27 offer records.
 - GitHub Actions run `40673506936` success on `c4c0808`; run `40673704362` success on docs commit `9c807f4` (build-and-test + Docker smoke test).
 - Previous 2026-10-28 16:05-16:42 local verification after merging KPI, bumping the PWA cache, and restoring ADB:
 - `npm run lint` PASS; `npm run typecheck` PASS; `npm run build` PASS (`dist/` regenerated and server restarted).
@@ -100,7 +105,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 - `src/services/BatchProcessingService.ts` — preserve `queuedAt` through ASSIGNED/status transitions so KPI queue wait is measured
 - `test/Kpi.test.ts` — lifecycle regression test proving `avgQueueWaitMs > 0` after dispatch
-- `/data/data/com.termux/files/home/shopee-bridge/server.js` — reset failed/attempted offer state when the notification `when` changes; 15s/40s fallback alerts, one-tap accept endpoint with shared lock and unique-notification guard, startup fallback resume, heartbeat health field
+- `/data/data/com.termux/files/home/shopee-bridge/server.js` — reset failed/attempted offer state when the notification `when` changes; 15s/40s fallback alerts, one-tap accept endpoint with shared lock and unique-notification guard, startup fallback resume, heartbeat health field, and `screenLooksAccepted()` for Shopee auto-accepted screens
 - `/data/data/com.termux/files/home/shopee-bridge/accept-now.sh` — notification button helper; loopback POST, 75s limit, result notification
 - `/data/data/com.termux/files/home/shopee-bridge/console.html` — “รับงานด่วน” header action and one-tap accept controls
 - `PROJECT_STATE.md`, `STATUS.md` — 2026-10-28 queue-wait/missed-offer/fallback verification and runtime state
@@ -140,7 +145,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - CPH2237 is not rooted. Shizuku+ is installed without Device Owner; **do not enable Device Owner/Dhizuku mode** because it previously caused the banking app to block access. Non-root `persist.adb.tcp.port` is denied, so ADB survival across reboot is not guaranteed.
 - FOD's Shopee integration is strictly read-only: bridge events and orders are displayed only and never create/assign/accept orders in FOD. The separate local bridge can perform a one-tap accept through `/action/accept-offer`; real order sync with FOD still needs an authorized Shopee Partner API/webhook plus an order-match/confirmation flow.
 - Official Shopee Open Platform research is recorded in `docs/shopee-partner-api-research.md`: marketplace shop-order APIs and order-status pushes exist, but no public ShopeeFood/Food Driver offer API was found in the reviewed V2 catalog. Food Driver integration remains blocked pending written confirmation of an authorized API and account eligibility from Shopee; no private app endpoints, cookies, or tokens are in scope.
-- 19 of 27 offer records still show `accept control not found` (23 failed, 2 accepted, 2 missed); no live offer has been available since the 16:45 key-reuse incident. Do not treat auto-accept or the notification action as verified until a real offer reaches the matching UI control.
+- Current unique offers: 22 failed, 3 accepted, 2 missed; 11 failed unique offers carry `accept control not found`, while some older failures have no error. The 18:37 auto-accepted case is now handled; the new path still needs a fresh live offer to verify it end-to-end.
 - The notification button itself was not tapped in testing because `/ui` captured the messaging app; verify the “สไลด์รับงาน” action manually on the next offer.
 - The KPI audit's Medium/Low items still need triage. The High queue-wait bug is fixed and tested.
 - Bridge changes above are local only because `shopee-bridge` is not a Git worktree; they are running under its supervisor but cannot be pushed with the FOD repository.
@@ -157,7 +162,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Next actions
 
-1. With ADB connected, verify live notifications, screenshot refresh, the auto-accept gesture, and the notification “สไลด์รับงาน” action with a real new offer; do not rely on either accept path until the matching UI control is confirmed.
+1. With ADB connected, verify the next live offer, including the Shopee auto-accepted screen, the auto-accept gesture, and the notification “สไลด์รับงาน” action; do not rely on either accept path until a fresh offer confirms the result.
 2. On the next natural reboot, confirm the FOD supervisor and app return automatically, and that the bridge hook also starts; inspect `fod-boot.log` and `shopee-bridge/boot.log`.
 3. Keep the admin bridge panel and `http://127.0.0.1:4020/` console open to verify live status and one-tap behavior; use the 4020 console area check when a newer heatmap is needed.
 4. When a host/domain/credentials exist, follow `README.md` production deployment and re-verify the smoke test.
