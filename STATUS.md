@@ -2,7 +2,7 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-28 18:05 (Asia/Bangkok)
+Updated: 2026-10-28 18:10 (Asia/Bangkok)
 
 ## Current state
 
@@ -10,7 +10,7 @@ Updated: 2026-10-28 18:05 (Asia/Bangkok)
 - CI: run `40673704362` green on `9c807f4`; run `40673506936` green on `c4c0808`; earlier green runs are `40662630710` (`75df64d`) and `40666331472` (`ba7787f`)
 - Local server: `http://127.0.0.1:3000` from rebuilt `dist/` (PostgreSQL), PID 19515; `/health` 200 (`queueSize=0`); KPI live `avgQueueWaitMs=58ms` (was structurally 0)
 - Supervisor: detached `scripts/local-supervisor.sh`, PID 22368; PostgreSQL PID 22386 and Redis PID 22402
-- ADB: `127.0.0.1:5555` connected (`CPH2237`; `adb shell` OK); `service.adb.tcp.port=5555`; bridge reports `adb.ok=true`; non-root `persist.adb.tcp.port` is denied
+- ADB: `127.0.0.1:5555` connected (`CPH2237`; `adb shell` OK); `service.adb.tcp.port=5555`; bridge reports `adb.ok=true`; non-root `persist.adb.tcp.port` is denied; forced disconnect at 18:09 recovered in ~11s with a `shopee-bridge-status` alert
 - Shopee bridge: `http://127.0.0.1:4020` 200; supervisor/app PIDs 22253/22263 at 18:07; 27 offer records (23 failed, 2 accepted, 2 missed), 0 active offers, 1s poll; auto-open/auto-accept enabled; heartbeat and ADB watchdog running
 - One-tap/fallback: bridge sends Termux notification at 15s/40s with a “สไลด์รับงาน” action; `/action/accept-offer` now has an accept lock and aborts if the notification is not uniquely found; startup resumes pending-offer alerts; supervisor alerts on ADB loss/recovery/restart
 - Missed offer: latest offer at 2026-10-28 16:45:31 local reused the failed key `0|...|0|null|10371`; it was dismissed at 16:54 with no auto-accept attempt; local `server.js` now treats a changed notification `when` as a fresh offer and resets attempt state
@@ -44,6 +44,7 @@ Updated: 2026-10-28 18:05 (Asia/Bangkok)
 - 2026-10-28 18:07-18:09 bridge one-tap/fallback hardening:
 - `node --check server.js`, `bash -n supervisor.sh`, `bash -n accept-now.sh` PASS
 - Bridge restarted: supervisor PID 22253, app PID 22263; `/health` 200, `adb.ok=true`, `pendingOffers=0`, `acceptBusy=false`, `lastHeartbeatAt` current
+- Forced `adb disconnect 127.0.0.1:5555`: supervisor logged `bridge reachable but ADB device is unavailable; keeping app running`, reconnected, then `ADB connection restored (serial=127.0.0.1:5555)`; app PID 22263 stayed unchanged and `shopee-bridge-status` notification was present (removed after test)
 - Synthetic restart test in a temp `DATA_DIR`: a 20s-old pending offer resumed at startup, `pendingOffers=1`, `lastFallbackAt` set, and fake `termux-notification` received the offer title plus `accept-now.sh 'test-key'` action
 - `./accept-now.sh test-no-such-offer` returned `{"ok":false,"error":"offer not found"}` and produced result notification `bridge-accept-result`; test notification removed
 - No live offer was available to test the real notification action or swipe; live end-to-end remains unverified

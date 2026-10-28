@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-28 18:05 Asia/Bangkok
+Updated: 2026-10-28 18:10 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -41,7 +41,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - ADB: `127.0.0.1:5555` connected (`adb devices` shows `CPH2237`); `adb shell` returns `ADB_OK`; `service.adb.tcp.port=5555`. Wireless debugging must stay enabled for the loopback endpoint. Non-root `persist.adb.tcp.port` is denied, so after reboot or Wireless-debugging-off the endpoint must be re-enabled/re-paired.
 - LAN URL: `http://10.40.184.249:3000` (current; `10.38.25.243` no longer responds; the address changes with the mobile network).
 - Shopee bridge: `http://127.0.0.1:4020` returns 200 with `adb.ok=true`; 27 offer records (23 failed, 2 accepted, 2 missed), 0 active offers, 1s poll, auto-open and auto-accept enabled; `pendingOffers=0`, `acceptBusy=false`, heartbeat current.
-- Shopee bridge supervisor/app: PIDs 22253/22263 at 18:07. The supervisor retries `adb connect 127.0.0.1:5555` every 10s whenever health reports `adb-not-ok`; heartbeat-based stale checks avoid restarting during paused/history-busy periods. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree). The latest offer at 16:45 reused a failed notification key and was not attempted; local `server.js` now resets state when the notification `when` changes.
+- Shopee bridge supervisor/app: PIDs 22253/22263 at 18:07. The supervisor retries `adb connect 127.0.0.1:5555` every 10s whenever health reports `adb-not-ok`; a forced disconnect at 18:09 recovered in ~11s without restarting the app and produced a `shopee-bridge-status` notification; heartbeat-based stale checks avoid restarting during paused/history-busy periods. Source lives in `/data/data/com.termux/files/home/shopee-bridge` (not a Git worktree). The latest offer at 16:45 reused a failed notification key and was not attempted; local `server.js` now resets state when the notification `when` changes.
 - Bridge one-tap/fallback: `sendOfferFallback` schedules 15s/40s alerts; the Termux notification action runs `accept-now.sh <orderId>`; `/action/accept-offer` uses a shared accept lock and aborts if `tapNotification` cannot uniquely find the offer; `resumeOfferFallbacks()` re-alerts or reschedules pending offers on restart.
 - Android Phantom Process Killer trimmed Termux child processes at 2026-10-25 03:06 local and killed the copilot CLI. `settings_enable_monitor_phantom_procs=false` and `max_phantom_processes=2147483647` were set via ADB; `com.termux`, `com.termux.boot`, and `com.termux.api` are battery-whitelisted. The user controls any further system changes.
 - KPI reporting: admin-only `GET /metrics/kpi?from=...&to=...` with Bangkok date handling and daily/driver breakdowns; live check on 2026-10-28 17:32 returned `avgQueueWaitMs=58`, 25 delivered orders, 3,182 THB revenue, and 682 THB delivery fees.
@@ -53,6 +53,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 - 2026-10-28 18:07-18:09 bridge one-tap/fallback hardening:
 - `node --check server.js`, `bash -n supervisor.sh`, `bash -n accept-now.sh` PASS.
 - Bridge restarted: supervisor PID 22253, app PID 22263; `/health` 200, `adb.ok=true`, `pendingOffers=0`, `acceptBusy=false`, `lastHeartbeatAt` current.
+- Forced `adb disconnect 127.0.0.1:5555`: supervisor logged `bridge reachable but ADB device is unavailable; keeping app running`, reconnected, then `ADB connection restored (serial=127.0.0.1:5555)`; app PID 22263 stayed unchanged and `shopee-bridge-status` notification was present (removed after test).
 - Synthetic restart test in a temp `DATA_DIR`: a 20s-old pending offer resumed at startup, `pendingOffers=1`, `lastFallbackAt` set, and fake `termux-notification` received the offer title plus `accept-now.sh 'test-key'` action.
 - `./accept-now.sh test-no-such-offer` returned `{"ok":false,"error":"offer not found"}` and produced result notification `bridge-accept-result`; test notification removed.
 - No live offer was available to test the real notification action or swipe; live end-to-end remains unverified.
