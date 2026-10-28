@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Updated: 2026-10-28 17:34 Asia/Bangkok
+Updated: 2026-10-28 17:37 Asia/Bangkok
 Purpose: single source of truth for project state, requirements, evidence, and remaining work.
 
 ## Goal
@@ -21,7 +21,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 | 8 | Accessible from localhost and same LAN | VERIFIED_COMPLETE | `http://127.0.0.1:3000/health` 200; `http://10.40.184.249:3000/health` 200 (LAN IP is dynamic; previous `10.38.25.243` no longer responds) |
 | 9 | No stale test orders blocking driver capacity | VERIFIED_COMPLETE | Driver `AVAILABLE`, 0 assigned, accepts new orders after E2E |
 | 10 | Deterministic self-cleaning E2E | VERIFIED_COMPLETE | Creates an order, clicks READY in the admin UI, drives the same order to DELIVERED by UI, verifies persistence, cleans up in `finally`; latest run `order_a4b2915a-...` PASS with zero console errors |
-| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Latest green runs: `40662630710` (`75df64d`) and `40666331472` (`ba7787f`); check this change's run after push |
+| 11 | CI build-and-test + Docker smoke test green | VERIFIED_COMPLETE | Run `40673506936` (`c4c0808`) success; earlier green runs `40662630710` (`75df64d`) and `40666331472` (`ba7787f`) |
 | 12 | Documentation for install/run/maintenance | VERIFIED_COMPLETE | `README.md`, `AGENTS.md`, `STATUS.md`, this file |
 | 13 | Production deployment to a public host | BLOCKED | Requires server/host, domain, TLS origin, real API keys, payment credentials, VAPID keys, and hosting cost |
 | 14 | Shopee Food Driver navigation handoff (`/shopee-driver.html`, `/integrations/shopee-driver/{links,deep-link}`) | VERIFIED_COMPLETE | API tests (`navigation-only`, 4 destinations, 400 on unknown), page served, live curl 200; no private Shopee API or order sync |
@@ -32,7 +32,7 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Current runtime
 
-- Branch `main`; `ba7787f` is the previous pushed HEAD. This change adds the KPI queue-wait fix, regression test, and verification docs.
+- Branch `main`; latest code commit `c4c0808` adds the KPI queue-wait fix, regression test, and verification docs. A docs-only follow-up may add a newer commit.
 - Server: PID 19515, rebuilt and restarted after the queue-wait fix; port 3000; `/health` 200 with `storage=postgres`, `queueSize=0`; KPI admin UI is served.
 - Supervisor: PID 22368, `scripts/local-supervisor.sh` (app/PostgreSQL/Redis health loop).
 - PostgreSQL: PID 22386, port 5432. Redis: PID 22402, 127.0.0.1:6379, data dir `$PREFIX/tmp/opencode` (`fod-redis.rdb`), outside the repo.
@@ -49,13 +49,14 @@ Deliver a working private order-dispatch system (Project ID `1388246780`) that r
 
 ## Last verification
 
-- 2026-10-28 17:28-17:34 local verification after the KPI queue-wait and bridge offer-key fixes:
+- 2026-10-28 17:28-17:37 local verification after the KPI queue-wait and bridge offer-key fixes:
 - `npm run lint` PASS; `npm run typecheck` PASS; `npm run build` PASS (`dist/` regenerated and server restarted as PID 19515).
 - `npm test -- --runInBand` PASS: 138 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`).
 - `node scripts/e2e-ui.js` PASS: order `order_0fa07dc8-04a3-4fe2-ae09-8792fd4a1636`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`, PWA assets OK.
 - KPI live: `GET /metrics/kpi?days=1` 200; `avgQueueWaitMs=58` (non-zero), 25 delivered, 3,182 THB revenue, 682 THB fees. The previous implementation cleared `queuedAt` on assignment and always produced 0.
 - Bridge offer-key fix verified by evaluating the real `upsertOrder` source with a seeded failed record: a new `when` resets `status=new`, `acceptAttemptedAt=null`, `error=null`; the same `when` preserves an in-flight `attempting` status.
 - Bridge restarted with the fix (app PID 15634); `/health` 200, `adb.ok=true`, current poll, 27 offer records.
+- GitHub Actions run `40673506936` success on `c4c0808` (build-and-test + Docker smoke test).
 - Previous 2026-10-28 16:05-16:42 local verification after merging KPI, bumping the PWA cache, and restoring ADB:
 - `npm run lint` PASS; `npm run typecheck` PASS; `npm run build` PASS (`dist/` regenerated and server restarted).
 - `npm test -- --runInBand` PASS: 137 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`).

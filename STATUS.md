@@ -2,12 +2,12 @@
 
 Authoritative state: `PROJECT_STATE.md`
 
-Updated: 2026-10-28 17:34 (Asia/Bangkok)
+Updated: 2026-10-28 17:37 (Asia/Bangkok)
 
 ## Current state
 
-- Branch: `main`; previous pushed HEAD `ba7787f`; this change adds the KPI queue-wait fix, regression test, and docs
-- CI: latest green runs are `40662630710` (`75df64d`) and `40666331472` (`ba7787f`); check this change's run after push
+- Branch: `main`; latest code commit `c4c0808` (KPI queue-wait fix, regression test, docs); a docs-only follow-up may add a newer commit
+- CI: run `40673506936` green on `c4c0808`; earlier green runs are `40662630710` (`75df64d`) and `40666331472` (`ba7787f`)
 - Local server: `http://127.0.0.1:3000` from rebuilt `dist/` (PostgreSQL), PID 19515; `/health` 200 (`queueSize=0`); KPI live `avgQueueWaitMs=58ms` (was structurally 0)
 - Supervisor: detached `scripts/local-supervisor.sh`, PID 22368; PostgreSQL PID 22386 and Redis PID 22402
 - ADB: `127.0.0.1:5555` connected (`CPH2237`; `adb shell` OK); `service.adb.tcp.port=5555`; bridge reports `adb.ok=true`; non-root `persist.adb.tcp.port` is denied
@@ -39,13 +39,14 @@ Updated: 2026-10-28 17:34 (Asia/Bangkok)
 
 ## Verification (last run)
 
-- 2026-10-28 17:28-17:34 verification after the KPI queue-wait and bridge offer-key fixes:
+- 2026-10-28 17:28-17:37 verification after the KPI queue-wait and bridge offer-key fixes:
 - `npm run lint` PASS; `npm run typecheck` PASS; `npm run build` PASS; server rebuilt and restarted (PID 19515)
 - `npm test -- --runInBand` PASS: 138 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
 - `node scripts/e2e-ui.js` PASS: order `order_0fa07dc8-04a3-4fe2-ae09-8792fd4a1636`, admin READY -> ASSIGNED, driver UI -> DELIVERED, `consoleErrors: []`, PWA assets OK
 - KPI live: admin `GET /metrics/kpi?days=1` 200; `avgQueueWaitMs=58` (non-zero), 25 delivered, 3,182 THB revenue, 682 THB fees
 - Bridge offer-key fix verified by loading the real `upsertOrder` source with a seeded failed record: new `when` -> `status=new`, `acceptAttemptedAt=null`, `error=null`; same `when` -> preserved `attempting`
 - Bridge restarted with the fix (app PID 15634); `/health` 200, `adb.ok=true`, cache current
+- GitHub Actions run `40673506936` success on `c4c0808` (build-and-test + Docker smoke test)
 - Previous 2026-10-28 16:05-16:42 verification after merging KPI, bumping the PWA cache, and restoring ADB:
 - `npm run lint` pass; `npm run typecheck` pass; `npm run build` pass; server rebuilt and restarted
 - `npm test -- --runInBand` 137 passed / 4 skipped, 21 suites passed + 1 skipped (Postgres integration suite skipped without `TEST_DATABASE_URL`)
