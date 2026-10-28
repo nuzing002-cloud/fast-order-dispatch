@@ -4,7 +4,7 @@ import { createDispatchApp } from '../src/index';
 import { BatchProcessingService } from '../src/services/BatchProcessingService';
 import { MemoryDispatchStore } from '../src/store/DispatchStore';
 import { DriverEarning, Order, OrderStatus, PaymentStatus } from '../src/types/order';
-import { makeOrder } from './helpers';
+import { makeDriver, makeOrder } from './helpers';
 
 let server: Server;
 let baseUrl: string;
@@ -216,6 +216,26 @@ test('aggregates totals, durations, on-time rate, revenue, and daily/driver rows
       earnings: 8
     }
   ]);
+});
+
+test('keeps queue-wait timestamps through dispatch for KPI', async () => {
+  const lifecycleStore = new MemoryDispatchStore();
+  const lifecycleService = new BatchProcessingService(3, lifecycleStore);
+  await lifecycleService.registerDriver(makeDriver());
+  const order = await lifecycleService.addOrder(makeOrder('queue-wait'));
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  const batch = await lifecycleService.processBatch();
+  expect(batch?.orderIds).toEqual([order.id]);
+  const stored = await lifecycleService.getOrder(order.id);
+  expect(stored?.queuedAt).toBeInstanceOf(Date);
+
+  const report = await lifecycleStore.getKpiReport({
+    from: new Date(Date.now() - 60_000),
+    to: new Date(Date.now() + 60_000)
+  });
+  expect(report.totals.avgQueueWaitMs).toBeGreaterThan(0);
+  await lifecycleService.close();
 });
 
 test('serves KPI controls and breakdown tables on the admin page', async () => {

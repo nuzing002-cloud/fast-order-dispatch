@@ -234,7 +234,6 @@ export class BatchProcessingService extends EventEmitter {
             status: OrderStatus.ASSIGNED,
             assignedDriverId: driverId,
             assignedAt: now,
-            queuedAt: undefined,
             estimatedDeliveryTime: new Date(
               now.getTime() + estimatedDurationMinutes * 60_000
             ),
@@ -282,7 +281,7 @@ export class BatchProcessingService extends EventEmitter {
         readyAt:
           nextStatus === OrderStatus.READY ? current.readyAt ?? now : current.readyAt,
         queuedAt:
-          nextStatus === OrderStatus.READY ? current.queuedAt ?? now : undefined,
+          nextStatus === OrderStatus.READY ? current.queuedAt ?? now : current.queuedAt,
         pickedUpAt:
           nextStatus === OrderStatus.PICKED_UP ? now : current.pickedUpAt,
         deliveredAt:
