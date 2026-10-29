@@ -383,8 +383,10 @@ export class PostgresDispatchStore implements DispatchStore {
         WHERE created_at >= $1 AND created_at <= $2
       )
     `;
-    const [summaryRows, dayRows, driverRows] = await Promise.all([
-      this.database.query<Record<string, unknown>>(
+    const [summaryRows, dayRows, driverRows] = await this.database.transaction(async tx => {
+      await tx.exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      return Promise.all([
+        tx.query<Record<string, unknown>>(
         `${scoped}
          SELECT
            count(*)::int AS orders_created,
@@ -427,7 +429,7 @@ export class PostgresDispatchStore implements DispatchStore {
          FROM scoped`,
         [range.from, range.to]
       ),
-      this.database.query<Record<string, unknown>>(
+        tx.query<Record<string, unknown>>(
         `${scoped}
          SELECT
            to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS date,
@@ -441,7 +443,7 @@ export class PostgresDispatchStore implements DispatchStore {
          ORDER BY date ASC`,
         [range.from, range.to]
       ),
-      this.database.query<Record<string, unknown>>(
+        tx.query<Record<string, unknown>>(
         `${scoped}
          SELECT
            scoped.driver_id,
@@ -458,7 +460,8 @@ export class PostgresDispatchStore implements DispatchStore {
          ORDER BY scoped.driver_id ASC`,
         [range.from, range.to]
       )
-    ]);
+      ]);
+    });
     const summary = summaryRows[0] ?? {};
     const perDayByDate = new Map(
       dayRows.map((row) => [

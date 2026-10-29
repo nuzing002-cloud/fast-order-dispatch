@@ -27,6 +27,7 @@
   let bridgeShotUrl = null;
   let lastBridgeShotAt = null;
   let selectedKpiDays = 7;
+  let kpiRequestSequence = 0;
 
   let dispatchDriverIds = ['1388246780'];
 
@@ -327,6 +328,7 @@
 
   async function loadKpi(days = selectedKpiDays) {
     selectedKpiDays = days;
+    const requestSequence = ++kpiRequestSequence;
     const now = new Date();
     const currentDay = new Date(`${bangkokDateKey(now)}T00:00:00.000Z`);
     currentDay.setUTCDate(currentDay.getUTCDate() - days + 1);
@@ -334,6 +336,7 @@
     const query = new URLSearchParams({ from: from.toISOString(), to: now.toISOString() });
     try {
       const report = await F.request(`/metrics/kpi?${query}`);
+      if (requestSequence !== kpiRequestSequence) return;
       const totals = report.totals;
       const percent = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
       const duration = (value) => `${Math.round(Number(value || 0) / 1000)} วินาที`;
@@ -387,6 +390,7 @@
             .join('')
         : '<tr><td colspan="5" class="empty">ไม่มีข้อมูลในช่วงนี้</td></tr>';
     } catch (error) {
+      if (requestSequence !== kpiRequestSequence) return;
       kpiRangeLabel.textContent = 'รายงาน KPI';
       kpiMetrics.innerHTML = `<div class="card"><p class="empty">โหลดรายงานไม่สำเร็จ: ${F.escapeHtml(error.message)}</p></div>`;
       kpiPerDay.innerHTML = '<tr><td colspan="4" class="empty">โหลดรายงานไม่สำเร็จ</td></tr>';
